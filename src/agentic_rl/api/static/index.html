@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agentic-rl</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e6e8ec;
+    --muted: #8b90a0;
+    --accent: #5b8cff;
+    --ok: #3ecf8e;
+    --bad: #ef5b5b;
+    --warn: #e0a84a;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f6f8;
+      --panel: #ffffff;
+      --border: #dde1e8;
+      --text: #1a1c22;
+      --muted: #6b7080;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 { font-size: 16px; margin: 0; }
+  header .mode { color: var(--muted); font-size: 12px; }
+  main {
+    display: grid;
+    grid-template-columns: minmax(320px, 1.3fr) 1fr;
+    gap: 16px;
+    padding: 16px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+  .panel h2 { font-size: 13px; margin: 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  #chat-log { display: flex; flex-direction: column; gap: 10px; max-height: 480px; overflow-y: auto; }
+  .msg { border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .msg.user { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .msg .request { font-weight: 600; margin-bottom: 6px; word-break: break-word; }
+  .msg .meta { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .status { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .status.executed { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+  .status.pending_confirmation { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+  .status.cancelled { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+  pre.params { background: var(--bg); border-radius: 6px; padding: 8px; overflow-x: auto; font-size: 12px; margin: 6px 0; }
+  .actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 6px 10px; font-size: 12px; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: var(--bad); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input[type=text] {
+    flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px;
+  }
+  #chat-form { display: flex; gap: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
+  .refresh { align-self: flex-end; }
+  .stat { display: flex; gap: 16px; }
+  .stat div b { font-size: 18px; display: block; }
+  .stat div span { color: var(--muted); font-size: 11px; }
+  .rule-list { display: flex; flex-direction: column; gap: 6px; }
+  .rule-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  }
+  .rule-item .rule-text { flex: 1; word-break: break-word; }
+  .rule-item .badge {
+    background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent);
+    border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600; white-space: nowrap;
+  }
+  #rule-form { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>agentic-rl</h1>
+  <span class="mode" id="mode-label">loading…</span>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Chat</h2>
+    <div id="chat-log"></div>
+    <form id="chat-form">
+      <input type="text" id="chat-input" placeholder="e.g. fetch https://httpbin.org/json" autocomplete="off" />
+      <button type="submit">Send</button>
+    </form>
+  </section>
+
+  <div style="display:flex; flex-direction:column; gap:16px; min-width:0;">
+    <section class="panel">
+      <h2>Reward</h2>
+      <div class="stat">
+        <div><b id="stat-mean">–</b><span>mean (last N)</span></div>
+        <div><b id="stat-n">–</b><span>episodes counted</span></div>
+      </div>
+      <canvas id="reward-chart" height="120"></canvas>
+    </section>
+
+    <section class="panel">
+      <h2>Rules</h2>
+      <div id="rules-list" class="rule-list"></div>
+      <form id="rule-form">
+        <input type="text" id="rule-input" placeholder="Add a standing rule, e.g. always use UTC" autocomplete="off" />
+        <button type="submit">Add</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Scheduled tasks</h2>
+      <table id="tasks-table">
+        <thead><tr><th>Instruction</th><th>Next run</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button class="secondary refresh" onclick="loadTasks()">Refresh</button>
+    </section>
+
+    <section class="panel">
+      <h2>Episodes</h2>
+      <table id="episodes-table">
+        <thead><tr><th>Request</th><th>Status</th><th>Reward</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button class="secondary refresh" onclick="refreshAll()">Refresh</button>
+    </section>
+  </div>
+</main>
+
+<script>
+const chatLog = document.getElementById("chat-log");
+const chatForm = document.getElementById("chat-form");
+const chatInput = document.getElementById("chat-input");
+
+let chart = null;
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status}: ${body}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function renderEpisodeCard(episode) {
+  const div = document.createElement("div");
+  div.className = "msg";
+  const statusClass = episode.status;
+  const rewardText = episode.final_reward != null
+    ? episode.final_reward.toFixed(2)
+    : (episode.implicit_reward ?? 0).toFixed(2) + " (implicit)";
+
+  div.innerHTML = `
+    <div class="meta">
+      <span class="status ${statusClass}">${episode.status.replace("_", " ")}</span>
+      &nbsp;capability: <b>${episode.action.candidate.capability || "(none)"}</b>
+      &nbsp;reward: <b>${rewardText}</b>
+    </div>
+    <pre class="params">${JSON.stringify(episode.action.candidate.params, null, 2)}</pre>
+    <div class="actions" data-episode="${episode.id}"></div>
+  `;
+
+  const actions = div.querySelector(".actions");
+
+  if (episode.status === "pending_confirmation") {
+    const confirmBtn = button("Confirm", "", async () => {
+      const updated = await api(`/confirm/${episode.id}`, { method: "POST" });
+      div.replaceWith(renderEpisodeCard(updated));
+      refreshEpisodesAndMetrics();
+    });
+    actions.appendChild(confirmBtn);
+  } else {
+    actions.appendChild(button("👍", "secondary", () => sendFeedback(episode.id, 1)));
+    actions.appendChild(button("👎", "secondary", () => sendFeedback(episode.id, -1)));
+    actions.appendChild(button("✏️ correct", "secondary", () => {
+      const correction = prompt("What should the agent have done instead?");
+      if (correction) sendFeedback(episode.id, -1, correction);
+    }));
+  }
+  return div;
+}
+
+function button(label, cls, onClick) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  if (cls) b.className = cls;
+  b.onclick = onClick;
+  return b;
+}
+
+async function sendFeedback(episodeId, score, correction) {
+  await api("/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ episode_id: episodeId, score, correction: correction || null }),
+  });
+  refreshEpisodesAndMetrics();
+}
+
+chatForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const message = chatInput.value.trim();
+  if (!message) return;
+
+  const userMsg = document.createElement("div");
+  userMsg.className = "msg user";
+  userMsg.innerHTML = `<div class="request">${escapeHtml(message)}</div>`;
+  chatLog.appendChild(userMsg);
+  chatInput.value = "";
+  chatLog.scrollTop = chatLog.scrollHeight;
+
+  try {
+    const episode = await api("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    chatLog.appendChild(renderEpisodeCard(episode));
+  } catch (err) {
+    const errMsg = document.createElement("div");
+    errMsg.className = "msg";
+    errMsg.textContent = "Error: " + err.message;
+    chatLog.appendChild(errMsg);
+  }
+  chatLog.scrollTop = chatLog.scrollHeight;
+  refreshEpisodesAndMetrics();
+});
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function loadHealth() {
+  const health = await api("/health");
+  document.getElementById("mode-label").textContent = `mode: ${health.mode} · v${health.version}`;
+}
+
+async function loadMetrics() {
+  const metrics = await api("/metrics?n=100");
+  document.getElementById("stat-n").textContent = metrics.n;
+  document.getElementById("stat-mean").textContent = metrics.mean_reward != null ? metrics.mean_reward.toFixed(3) : "–";
+
+  const ctx = document.getElementById("reward-chart");
+  const labels = metrics.rewards.map((_, i) => i + 1);
+  if (chart) {
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = metrics.rewards;
+    chart.update();
+  } else {
+    chart = new Chart(ctx, {
+      type: "line",
+      data: { labels, datasets: [{ label: "reward", data: metrics.rewards, borderColor: "#5b8cff", tension: 0.25, pointRadius: 0 }] },
+      options: {
+        responsive: true,
+        scales: { y: { suggestedMin: -1, suggestedMax: 1 } },
+        plugins: { legend: { display: false } },
+      },
+    });
+  }
+}
+
+async function loadRules() {
+  const rules = await api("/memories?limit=50");
+  const list = document.getElementById("rules-list");
+  list.innerHTML = "";
+  if (rules.length === 0) {
+    list.innerHTML = `<div class="empty">No standing rules yet</div>`;
+    return;
+  }
+  for (const rule of rules) {
+    const row = document.createElement("div");
+    row.className = "rule-item";
+    row.innerHTML = `
+      <span class="rule-text">${escapeHtml(rule.text)}</span>
+      <span class="badge">seen ×${rule.support_count}</span>
+    `;
+    const removeBtn = button("✕", "secondary", async () => {
+      await api(`/memories/${rule.id}`, { method: "DELETE" });
+      loadRules();
+    });
+    row.appendChild(removeBtn);
+    list.appendChild(row);
+  }
+}
+
+const ruleForm = document.getElementById("rule-form");
+const ruleInput = document.getElementById("rule-input");
+ruleForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = ruleInput.value.trim();
+  if (!text) return;
+  ruleInput.value = "";
+  await api("/memories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, capability: null }),
+  });
+  loadRules();
+});
+
+async function loadTasks() {
+  const tasks = await api("/tasks");
+  const tbody = document.querySelector("#tasks-table tbody");
+  tbody.innerHTML = "";
+  if (tasks.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No scheduled tasks</td></tr>`;
+    return;
+  }
+  for (const task of tasks) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${escapeHtml(task.instruction || "")}</td><td>${task.next_run_time || "–"}</td><td></td>`;
+    const cancelBtn = button("Cancel", "danger", async () => {
+      await api(`/tasks/${task.id}`, { method: "DELETE" });
+      loadTasks();
+    });
+    tr.lastElementChild.appendChild(cancelBtn);
+    tbody.appendChild(tr);
+  }
+}
+
+async function loadEpisodes() {
+  const episodes = await api("/episodes?limit=20");
+  const tbody = document.querySelector("#episodes-table tbody");
+  tbody.innerHTML = "";
+  if (episodes.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No episodes yet</td></tr>`;
+    return;
+  }
+  for (const ep of episodes) {
+    const reward = ep.final_reward != null ? ep.final_reward.toFixed(2) : ep.implicit_reward.toFixed(2);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td title="${escapeHtml(ep.state.request)}">${escapeHtml(ep.state.request.slice(0, 40))}</td>
+      <td><span class="status ${ep.status}">${ep.status.replace("_", " ")}</span></td>
+      <td>${reward}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+async function refreshEpisodesAndMetrics() {
+  await Promise.all([loadMetrics(), loadEpisodes(), loadTasks(), loadRules()]);
+}
+
+async function refreshAll() {
+  await Promise.all([loadHealth(), loadMetrics(), loadTasks(), loadEpisodes(), loadRules()]);
+}
+
+refreshAll();
+setInterval(refreshEpisodesAndMetrics, 15000);
+</script>
+</body>
+</html>

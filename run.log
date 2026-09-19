@@ -1,0 +1,421 @@
+[run.bat] Starting agentic-rl on http://127.0.0.1:8000 ...
+INFO:     Started server process [19960]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50410 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50432 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62424 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62424 - "GET /memories HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61292 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52071 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52071 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61981 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64298 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50855 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56712 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56712 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:59418 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65122 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56895 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59882 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65084 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61561 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55078 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52595 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59882 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52595 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55078 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59882 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61561 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49394 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57051 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60999 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53548 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52102 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62677 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52102 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58304 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64427 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63495 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65322 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52029 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62859 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55936 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52843 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56773 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63660 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50922 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53712 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64878 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64358 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59410 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52002 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60830 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49232 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58988 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58843 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58880 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58880 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58843 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49232 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58988 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60643 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52940 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61880 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58610 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51651 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51651 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58610 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52940 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51651 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61880 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58770 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50339 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63963 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58770 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53586 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61899 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60673 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60673 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57734 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53797 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49361 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61899 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53797 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59977 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57734 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60673 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53797 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61899 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57734 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59977 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59977 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57734 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53797 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61899 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61111 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58312 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61751 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61857 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56171 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55788 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60984 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50191 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50191 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50191 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55788 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60984 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56171 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55753 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52216 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62644 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51984 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59275 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53786 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54175 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55078 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51741 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57173 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54175 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51741 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57173 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55078 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59277 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49904 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61621 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50528 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61020 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55905 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55906 - "DELETE /tasks/79a610eeddbb48eea0d956fed5479080 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55907 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55908 - "POST /memories HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55909 - "GET /memories HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56975 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57875 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56975 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64608 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64609 - "DELETE /memories/ec855ea6a0a04c8aba0fccdcd50ac7fc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64610 - "DELETE /memories/does-not-exist HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55913 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55712 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52693 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60714 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57778 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53661 - "POST /chat HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\uvicorn\protocols\http\httptools_impl.py", line 422, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 1780, in handle
+    await self.original_router.handle(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 2789, in handle
+    await included_router._handle_selected(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 1800, in _handle_selected
+    await original_route.handle(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 1279, in handle
+    await app(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\api\routes.py", line 44, in chat
+    return await _agent(request).run(body.message, source="user")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\core\agent.py", line 77, in run
+    arms = [self._arm_for(state, c) for c in candidates]
+            ~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\core\agent.py", line 161, in _arm_for
+    id=features.arm_id(candidate),
+       ~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\policy\features.py", line 41, in arm_id
+    template_hash = param_template_hash(candidate.capability, candidate.params)
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\policy\features.py", line 33, in param_template_hash
+    encoded = json.dumps(_param_template(capability, params), sort_keys=True)
+                         ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\policy\features.py", line 21, in _param_template
+    "header_keys": sorted((params.get("headers") or {}).keys()),
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'str' object has no attribute 'keys'
+INFO:     127.0.0.1:57778 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52693 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60714 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57778 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57779 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49687 - "GET /episodes?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64785 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52257 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57658 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56375 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56375 - "POST /confirm/ce632e1e10e7433e81da3aab12a5cc5e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52257 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57658 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64785 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56375 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56375 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64785 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52257 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57658 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56375 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56376 - "POST /chat HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\uvicorn\protocols\http\httptools_impl.py", line 422, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\routing.py", line 670, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 2734, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 1780, in handle
+    await self.original_router.handle(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 2789, in handle
+    await included_router._handle_selected(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 1800, in _handle_selected
+    await original_route.handle(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 1279, in handle
+    await app(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 158, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\nelagrody\Projects\agentic-rl\.venv\Lib\site-packages\fastapi\routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\api\routes.py", line 44, in chat
+    return await _agent(request).run(body.message, source="user")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\core\agent.py", line 77, in run
+    arms = [self._arm_for(state, c) for c in candidates]
+            ~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\core\agent.py", line 161, in _arm_for
+    id=features.arm_id(candidate),
+       ~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\policy\features.py", line 41, in arm_id
+    template_hash = param_template_hash(candidate.capability, candidate.params)
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\policy\features.py", line 33, in param_template_hash
+    encoded = json.dumps(_param_template(capability, params), sort_keys=True)
+                         ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nelagrody\Projects\agentic-rl\src\agentic_rl\policy\features.py", line 21, in _param_template
+    "header_keys": sorted((params.get("headers") or {}).keys()),
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'str' object has no attribute 'keys'
+INFO:     127.0.0.1:51308 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63021 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56431 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59986 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54954 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59989 - "GET /episodes?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64467 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51045 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56490 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64181 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56491 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61100 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63955 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54293 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65047 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57825 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54296 - "GET /episodes?limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63715 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50388 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65039 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63699 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59700 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57332 - "POST /confirm/07aad5b1035243b9bee15188bfda1939 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49482 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56666 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57987 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50735 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52082 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54481 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62007 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58836 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61212 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50742 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63099 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64569 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58852 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52537 - "POST /confirm/3409126173584dbda7e06a27cd21366b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56834 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57137 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54625 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55677 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56914 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:56914 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63068 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53251 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49444 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49500 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52539 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54314 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57458 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56007 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53143 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53730 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53737 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55511 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53780 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63198 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60317 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53370 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63585 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55608 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51677 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:51677 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59863 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57816 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59185 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64656 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52843 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57467 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55805 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58152 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52165 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51602 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62059 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62463 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55313 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54477 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57700 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56424 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59223 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59223 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57700 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56424 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54477 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53639 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64357 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52511 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58455 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53639 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53639 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64357 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53639 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58455 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52511 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52511 - "POST /feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53639 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58455 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52511 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64357 - "GET /memories?limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52511 - "GET /metrics?n=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58455 - "GET /episodes?limit=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64357 - "GET /tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53639 - "GET /memories?limit=50 HTTP/1.1" 200 OK
