@@ -8,7 +8,7 @@ from pydantic_ai.models.test import TestModel
 
 from agentic_rl.core import observability
 from agentic_rl.core.config import Settings
-from agentic_rl.core.models import Action, Candidate, Episode, Memory, Outcome, State
+from agentic_rl.core.models import Action, Candidate, Episode, Memory, Outcome, State, Step
 from agentic_rl.llm.distiller import DistillResult, LLMDistiller, MockDistiller
 from agentic_rl.llm.prompts import render_existing_rules
 
@@ -16,11 +16,10 @@ from agentic_rl.llm.prompts import render_existing_rules
 def make_episode() -> Episode:
     candidate = Candidate(capability="http_call", params={"method": "GET", "url": "https://api.example.com/orders"})
     action = Action(candidate=candidate, index=0, explored=False, arm_id="http_call:abc:False")
+    step = Step(index=0, candidates=[candidate], action=action, outcome=Outcome(ok=True, status="200"))
     return Episode(
         state=State(request="fetch orders from https://api.example.com/orders"),
-        candidates=[candidate],
-        action=action,
-        outcome=Outcome(ok=True, status="200"),
+        steps=[step],
         implicit_reward=0.2,
         planner_id="mock",
         policy_id="linucb",

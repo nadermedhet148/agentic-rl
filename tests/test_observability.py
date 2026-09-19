@@ -28,6 +28,11 @@ def test_setup_returns_false_when_disabled():
     assert observability.enabled() is False
 
 
+def test_trace_is_a_true_noop_when_disabled():
+    with observability.trace("x", input="y", session_id="s1") as t:
+        assert t is None
+
+
 def test_span_is_a_true_noop_when_disabled():
     with observability.span("x", input="y", foo="bar") as s:
         assert s is None
@@ -36,6 +41,10 @@ def test_span_is_a_true_noop_when_disabled():
 def test_generation_is_a_true_noop_when_disabled():
     with observability.generation("x", model="claude-opus-5", input="y") as g:
         assert g is None
+
+
+def test_get_current_trace_id_returns_none_when_disabled():
+    assert observability.get_current_trace_id() is None
 
 
 def test_update_and_flush_are_safe_noops_when_disabled():
@@ -83,15 +92,31 @@ def test_setup_activates_and_spans_work_against_real_sdk(monkeypatch):
     assert activated is True
     assert observability.enabled() is True
 
-    with observability.span("agent.run", input="do a thing", source="user") as span:
-        assert span is not None
-        with observability.generation("claude.plan", model="claude-opus-5", input="prompt") as gen:
-            assert gen is not None
-            observability.update_current_generation(output={"candidates": []}, usage_details={"input_tokens": 5})
-        observability.update_current_span(output={"episode_id": "abc", "status": "executed"})
+    # trace > span > generation nesting with shared trace_id across separate calls
+    custom_trace_id = "46042ff0ff2d4a6eafa95e5985164b2a"
+
+    # 1. api.chat creates the trace with trace_id
+    with observability.trace("api.chat", input="do a thing", trace_id=custom_trace_id, session_id=custom_trace_id) as t:
+        assert t is not None
+        assert observability.get_current_trace_id() == custom_trace_id
+        with observability.span("agent.run", input="do a thing", source="user") as span:
+            assert span is not None
+            assert observability.get_current_trace_id() == custom_trace_id
+            with observability.generation("claude.plan", model="claude-opus-5", input="prompt") as gen:
+                assert gen is not None
+                assert observability.get_current_trace_id() == custom_trace_id
+                observability.update_current_generation(output={"candidates": []}, usage_details={"input_tokens": 5})
+            observability.update_current_span(output={"episode_id": custom_trace_id, "status": "executed"})
+
+    # 2. api.feedback attaches to the same trace_id
+    with observability.trace("api.feedback", input=custom_trace_id, trace_id=custom_trace_id, session_id=custom_trace_id) as t2:
+        assert t2 is not None
+        assert observability.get_current_trace_id() == custom_trace_id
+        with observability.span("agent.feedback", input=custom_trace_id, trace_id=custom_trace_id) as s2:
+            assert s2 is not None
+            assert observability.get_current_trace_id() == custom_trace_id
 
     observability.flush()
-    observability.shutdown()
 
 
 # --- agent wiring: spans don't change episode behavior ------------------------
@@ -140,4 +165,4 @@ async def test_agent_run_unaffected_by_observability_when_disabled():
         episode = await agent.run("fetch x")
 
     assert episode.status == "executed"
-    assert episode.outcome.ok is True
+    assert episode.steps[0].outcome.ok is True

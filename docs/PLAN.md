@@ -37,19 +37,32 @@ User / Web UI ──► FastAPI ──► Agent loop ──► Capability regist
               Scheduler (APScheduler, SQLite jobstore) ──► Agent loop (source=scheduler)
 ```
 
-Agent loop per request:
-1. Build **state**: intent category (from planner), source (user/scheduler), hour-of-day,
-   rolling success rate per capability, count of prior corrections for this intent.
+Agent loop per request — **multi-step**: an episode is a sequence of steps
+(plan → select → confirm-gate → execute → observe), repeated until a step executes
+the terminal `answer` capability or `settings.max_steps` is reached:
+1. Build **state** once per episode: intent category (from the first step's planner
+   call), source (user/scheduler), hour-of-day, rolling per-capability success rate
+   (now tracked per step, not per episode), count of prior corrections for this intent.
 2. Retrieve top-k **similar past episodes with corrections** (SQLite FTS5 on request text)
-   and inject them into the planner prompt ("previously corrected: …").
-3. Planner returns **candidates**: `[{capability, params, rationale, confidence, needs_confirmation}]`
-   via structured output (Pydantic schema).
+   and inject them into the planner prompt ("previously corrected: …"), alongside a
+   summary of this episode's own steps so far (capability, params, outcome) once step > 0.
+3. Planner returns **candidates** for the *next* step: `[{capability, params, rationale,
+   confidence, needs_confirmation}]` via structured output (Pydantic schema). Once nothing
+   further is needed, it proposes the `answer` capability with the final reply text.
 4. `Policy.select(state_features, candidates)` → chosen candidate + `explored: bool`.
 5. Safety gate: if chosen capability tier is `write` and (`needs_confirmation` or policy
-   confidence low or mode=prod-strict) → return `pending_confirmation`; user confirms via API.
+   confidence low or mode=prod-strict) → episode status `pending_confirmation`, loop
+   pauses; user confirms via API and the loop resumes from that step.
 6. Execute → `Outcome{ok, status, payload, error}`.
-7. Compute **implicit reward**, persist `Episode` (reward provisional), respond with `episode_id`.
-8. Later `POST /feedback {episode_id, score, correction?}` → final reward → `Policy.update`.
+7. Compute **implicit reward** for the step, persist the `Episode` (reward provisional),
+   and — if the step wasn't `answer` and steps remain — go back to 2 for the next step.
+   Streamed live to the UI as SSE `step` events (`POST /chat/stream`,
+   `POST /confirm/{id}/stream`); `POST /chat`/`POST /confirm/{id}` remain available as
+   plain blocking calls that just return the finished (or paused) `Episode`.
+8. Once `answer` executes (or `max_steps` is hit), the episode's `implicit_reward` is the
+   mean of its steps' implicit rewards. Later `POST /feedback {episode_id, score,
+   correction?}` sets the episode's `final_reward` and updates **every step's** arm with
+   that same reward (feedback is episode-level, not per step).
 
 ## Project layout
 
@@ -133,9 +146,12 @@ tests/
   bandit has converged.
 - **Scheduled tasks** store the natural-language instruction, not a frozen action, so the
   policy can apply what it has learned by the time the job fires.
-- **Episode schema** (store + export): request, source, state features, all candidates,
-  chosen idx, explored, outcome, implicit_reward, explicit_score, correction, final_reward,
-  planner id, policy id, timestamps. This is the future DPO dataset (chosen vs. rejected).
+- **Episode schema** (store + export): request, source, a `steps` list (one entry per
+  plan/select/execute pass: candidates considered, chosen idx, explored, outcome, per-step
+  implicit reward), the terminal `answer` text (if reached), episode-level implicit_reward
+  (mean of step rewards), explicit_score, correction, final_reward, planner id, policy id,
+  timestamps. `rl/export.py` flattens this to one chosen-vs-rejected record per step, all
+  sharing the episode's reward — this is the future DPO dataset.
 
 ## Verification
 

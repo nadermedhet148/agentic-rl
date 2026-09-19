@@ -6,32 +6,49 @@ actually captures and why it's built the way it is.
 
 ## What gets traced
 
-One Langfuse **trace** per `Agent.run` / `Agent.confirm` / `Agent.record_feedback`
-call — i.e. one trace per `/chat`, `/confirm/{id}`, `/feedback` request (and per
-scheduled-task firing, since those also call `Agent.run`).
+Requests and background jobs are wrapped in top-level **traces** at the API /
+scheduler boundary via `observability.trace(...)`. Nested units of work become
+child **spans** via `observability.span(...)`, and LLM calls become child
+**generations** via `observability.generation(...)`.
+
+Related calls share the exact same **`trace_id = episode_id`** (and `session_id = episode_id`).
+Because Langfuse traces are keyed by `trace_id`, this unifies the initial execution,
+any confirmation, and subsequent feedback into **one single Langfuse trace** in the dashboard:
 
 ```
-agent.run                              (span)
-  input: the request text
-  output: episode id, status, capability, reward
-  └─ {provider}.plan                   (generation, only when planner != mock)
-       input: system prompt + rendered rules/corrections/request
-       output: the candidates the model proposed
-       usage_details: real input/output token counts
+[Trace: episode_id]
+  ├─ api.chat                          (POST /chat and /chat/stream both use this trace)
+  │    └─ agent.run
+  │         input: the request text
+  │         output: episode id, status, step count, capabilities per step, answer, reward
+  │         ├─ agent.step              (one per step in the loop, index=0,1,2,...)
+  │         │    └─ {provider}.plan    (generation, only when planner != mock)
+  │         │         input: system prompt + rendered capabilities/request/history/rules/corrections
+  │         │         output: the candidates the model proposed for this step
+  │         │         usage_details: real input/output token counts
+  │         └─ agent.step              (repeats until an `answer` step or max_steps)
+  │
+  ├─ api.confirm                       (same trace_id = episode_id; /confirm and /confirm/.../stream)
+  │    └─ agent.confirm
+  │         input: episode id
+  │         output: episode id, status, step count, capabilities per step, answer, reward
+  │         └─ agent.step              (0+ more steps if the loop continues past the confirmed one)
+  │
+  └─ api.feedback                      (same trace_id = episode_id)
+       └─ agent.feedback
+            input: episode id
+            metadata: score, has_correction
+            └─ {provider}.distill      (generation, only when a correction was given)
+                 input: the original request + every step's action taken + the correction
+                 output: the distilled rule + match/supersede decision
 
-agent.feedback                         (span)
-  input: episode id
-  metadata: score, has_correction
-  └─ {provider}.distill                (generation, only when a correction was given)
-       input: the correction + existing candidate rules
-       output: the distilled rule + match/supersede decision
+[Trace: scheduler_trace_id]             (independent trace, source="scheduler")
+  └─ scheduler.run
+       └─ agent.run
+            input: scheduled instruction
+            output: episode id, status, step count, capabilities per step, answer, reward
+            └─ agent.step              (one per step, each with a {provider}.plan generation)
 ```
-
-`{provider}` is whichever of `claude`/`openai`/`google` `AGENTIC_RL_PLANNER`
-selects (see docs/ARCHITECTURE.md "LLM calls — model-agnostic via PydanticAI")
-— the generation name itself shows you which model actually ran a given trace.
-`agent.confirm` is the same shape as `agent.run` (a span, no nested generation —
-confirming just executes an already-planned action).
 
 **Why the LLM calls are traced by hand instead of auto-instrumented:** the
 obvious approach for the Claude case specifically is
@@ -51,11 +68,14 @@ different tracing mechanism per provider. The two call sites (`llm/llm_planner.p
 `llm/distiller.py`) are wrapped by hand instead — see `core/observability.py`.
 
 **What's *not* separately traced (yet):** policy selection (`Policy.select`) and
-capability execution (`Capability.execute`) happen inside the `agent.run` span
+capability execution (`Capability.execute`) happen inside each `agent.step` span
 but don't get their own child span. Easy to add later —
 `observability.span("policy.select", ...)` / `observability.span("capability.execute", ...)`
 around the relevant lines in `core/agent.py` — left out for now to keep the
-trace tree simple until there's a concrete reason to want that granularity.
+trace tree simple until there's a concrete reason to want that granularity. Note
+that the one step `agent.confirm` itself executes (the previously-pending one)
+runs directly under `agent.confirm`, not inside its own `agent.step` span — only
+steps planned by `Agent._advance`'s loop get one.
 
 ## Setup
 
@@ -108,9 +128,9 @@ uvicorn agentic_rl.api.app:create_app --factory
 ```
 
 Send one chat message through the UI or `curl -X POST localhost:8000/chat -d '{"message":"..."}'`,
-then open the Langfuse project — a trace named `agent.run` should appear within
-a few seconds (traces batch-flush; see `LANGFUSE_FLUSH_INTERVAL` below if you
-want them to show up faster during manual testing).
+then open the Langfuse project — a trace named `api.chat` should appear within
+a few seconds (with child span `agent.run`; traces batch-flush; see `LANGFUSE_FLUSH_INTERVAL`
+below if you want them to show up faster during manual testing).
 
 ## Configuration reference
 

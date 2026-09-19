@@ -33,6 +33,15 @@ CREATE INDEX IF NOT EXISTS idx_episodes_arm ON episodes(arm_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_capability ON episodes(capability);
 CREATE INDEX IF NOT EXISTS idx_episodes_created_at ON episodes(created_at);
 CREATE INDEX IF NOT EXISTS idx_episodes_job_id ON episodes(job_id);
+CREATE TABLE IF NOT EXISTS episode_steps (
+    episode_id TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    capability TEXT NOT NULL,
+    arm_id TEXT NOT NULL,
+    outcome_ok INTEGER,
+    PRIMARY KEY (episode_id, step_index)
+);
+CREATE INDEX IF NOT EXISTS idx_episode_steps_capability ON episode_steps(capability);
 CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
     episode_id UNINDEXED, request, correction, hosts
 );
@@ -92,14 +101,17 @@ class EpisodeStore:
         return self._conn
 
     def save(self, episode: Episode) -> None:
+        last = episode.steps[-1] if episode.steps else None
         job_id = None
-        if (
-            episode.action.candidate.capability == "schedule_task"
-            and episode.outcome is not None
-            and episode.outcome.ok
-            and isinstance(episode.outcome.payload, dict)
-        ):
-            job_id = episode.outcome.payload.get("job_id")
+        for step in episode.steps:
+            if (
+                step.action.candidate.capability == "schedule_task"
+                and step.outcome is not None
+                and step.outcome.ok
+                and isinstance(step.outcome.payload, dict)
+            ):
+                job_id = step.outcome.payload.get("job_id")
+                break
 
         self._conn.execute(
             """INSERT OR REPLACE INTO episodes
@@ -112,10 +124,10 @@ class EpisodeStore:
                 episode.created_at.isoformat(),
                 episode.state.request,
                 episode.state.source,
-                episode.action.candidate.capability,
-                episode.action.arm_id,
+                last.action.candidate.capability if last else "",
+                last.action.arm_id if last else "",
                 episode.status,
-                None if episode.outcome is None else int(episode.outcome.ok),
+                None if last is None or last.outcome is None else int(last.outcome.ok),
                 episode.implicit_reward,
                 episode.explicit_score,
                 episode.correction,
@@ -125,6 +137,21 @@ class EpisodeStore:
                 job_id,
                 episode.model_dump_json(),
             ),
+        )
+        self._conn.execute("DELETE FROM episode_steps WHERE episode_id = ?", (episode.id,))
+        self._conn.executemany(
+            "INSERT INTO episode_steps (episode_id, step_index, capability, arm_id, outcome_ok) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                (
+                    episode.id,
+                    step.index,
+                    step.action.candidate.capability,
+                    step.action.arm_id,
+                    None if step.outcome is None else int(step.outcome.ok),
+                )
+                for step in episode.steps
+            ],
         )
         hosts = " ".join(text_util.extract_hosts(episode.state.request))
         self._conn.execute("DELETE FROM episodes_fts WHERE episode_id = ?", (episode.id,))
@@ -190,7 +217,7 @@ class EpisodeStore:
 
     def capability_success_rate(self, capability: str, default: float = 0.5) -> float:
         row = self._conn.execute(
-            "SELECT AVG(outcome_ok) AS rate FROM episodes WHERE capability = ? AND outcome_ok IS NOT NULL",
+            "SELECT AVG(outcome_ok) AS rate FROM episode_steps WHERE capability = ? AND outcome_ok IS NOT NULL",
             (capability,),
         ).fetchone()
         return default if row is None or row["rate"] is None else float(row["rate"])

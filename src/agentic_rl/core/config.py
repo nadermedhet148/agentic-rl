@@ -31,7 +31,11 @@ class Settings(BaseSettings):
     policy: str = "linucb"  # linucb | epsilon | greedy
     http_timeout_s: float = 15.0
     http_max_body_bytes: int = 256_000
+    web_search_max_results: int = 5
+    web_search_timeout_s: float = 10.0
     corrections_top_k: int = 5
+    max_steps: int = 6  # cap on plan->act->observe iterations per episode (see core/agent.py)
+    planner_history_max_chars: int = 4000  # per-step outcome payload truncation in the planner prompt
 
     # Langfuse tracing (see docs/OBSERVABILITY.md) — off by default. Everything
     # else Langfuse needs (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL,

@@ -4,15 +4,30 @@ import httpx
 import pytest
 import respx
 
+from agentic_rl.capabilities.answer import AnswerCapability
 from agentic_rl.capabilities.base import Tier
 from agentic_rl.capabilities.http_call import HttpCallCapability
 from agentic_rl.capabilities.registry import CapabilityRegistry
 from agentic_rl.capabilities.schedule_task import ScheduleTaskCapability
+from agentic_rl.capabilities.web_search import WebSearchCapability
 
 
 def make_http_capability() -> HttpCallCapability:
     client = httpx.AsyncClient()
     return HttpCallCapability(client)
+
+
+class FakeSearch:
+    def __init__(self, results: list[dict] | None = None, error: Exception | None = None) -> None:
+        self._results = results if results is not None else []
+        self._error = error
+        self.calls: list[tuple[str, int]] = []
+
+    def text(self, query: str, max_results: int) -> list[dict]:
+        self.calls.append((query, max_results))
+        if self._error is not None:
+            raise self._error
+        return self._results
 
 
 class FakeScheduler:
@@ -117,6 +132,69 @@ def test_schedule_task_tier_is_write():
     assert cap.tier_for({"instruction": "x", "cron": "0 9 * * *"}) is Tier.WRITE
 
 
+# --- web_search --------------------------------------------------------------
+
+
+def test_web_search_tier_is_read():
+    cap = WebSearchCapability(FakeSearch())
+    assert cap.tier_for({"query": "x"}) is Tier.READ
+
+
+@pytest.mark.asyncio
+async def test_web_search_success():
+    search = FakeSearch(
+        results=[{"title": "Example", "href": "https://example.com", "body": "an example"}]
+    )
+    cap = WebSearchCapability(search, max_results=3)
+    outcome = await cap.execute({"query": "example"})
+    assert outcome.ok is True
+    assert outcome.status == "200"
+    assert outcome.payload["results"] == [
+        {"title": "Example", "url": "https://example.com", "snippet": "an example"}
+    ]
+    assert search.calls == [("example", 3)]
+
+
+@pytest.mark.asyncio
+async def test_web_search_requires_query():
+    cap = WebSearchCapability(FakeSearch())
+    outcome = await cap.execute({})
+    assert outcome.ok is False
+    assert "query is required" in outcome.error
+
+
+@pytest.mark.asyncio
+async def test_web_search_surfaces_backend_error():
+    cap = WebSearchCapability(FakeSearch(error=RuntimeError("boom")))
+    outcome = await cap.execute({"query": "example"})
+    assert outcome.ok is False
+    assert "boom" in outcome.error
+
+
+# --- answer --------------------------------------------------------------
+
+
+def test_answer_tier_is_read():
+    cap = AnswerCapability()
+    assert cap.tier_for({"text": "hi"}) is Tier.READ
+
+
+@pytest.mark.asyncio
+async def test_answer_success():
+    cap = AnswerCapability()
+    outcome = await cap.execute({"text": "the answer is 42"})
+    assert outcome.ok is True
+    assert outcome.payload == {"text": "the answer is 42"}
+
+
+@pytest.mark.asyncio
+async def test_answer_requires_text():
+    cap = AnswerCapability()
+    outcome = await cap.execute({})
+    assert outcome.ok is False
+    assert "text is required" in outcome.error
+
+
 # --- registry --------------------------------------------------------------
 
 
@@ -124,17 +202,21 @@ def test_registry_register_and_lookup():
     registry = CapabilityRegistry()
     http_cap = make_http_capability()
     sched_cap = ScheduleTaskCapability(FakeScheduler())
+    search_cap = WebSearchCapability(FakeSearch())
+    answer_cap = AnswerCapability()
     registry.register(http_cap)
     registry.register(sched_cap)
+    registry.register(search_cap)
+    registry.register(answer_cap)
 
-    assert set(registry.names()) == {"http_call", "schedule_task"}
+    assert set(registry.names()) == {"http_call", "schedule_task", "web_search", "answer"}
     assert registry.get("http_call") is http_cap
 
     with pytest.raises(KeyError):
         registry.get("nope")
 
     schemas = registry.tool_schemas()
-    assert {s["name"] for s in schemas} == {"http_call", "schedule_task"}
+    assert {s["name"] for s in schemas} == {"http_call", "schedule_task", "web_search", "answer"}
 
 
 def test_registry_rejects_duplicate_names():

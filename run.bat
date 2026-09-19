@@ -24,7 +24,7 @@ if not exist ".env" (
 )
 
 set "PORT=%~1"
-if "%PORT%"=="" set "PORT=8000"
+if "%PORT%"=="" set "PORT=8001"
 
 echo [run.bat] Starting agentic-rl on http://127.0.0.1:%PORT% ...
 ".venv\Scripts\python.exe" -m uvicorn agentic_rl.api.app:create_app --factory --host 127.0.0.1 --port %PORT%

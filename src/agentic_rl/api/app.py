@@ -14,6 +14,7 @@ from agentic_rl.api.routes import router
 from agentic_rl.capabilities.http_call import HttpCallCapability
 from agentic_rl.capabilities.registry import CapabilityRegistry
 from agentic_rl.capabilities.schedule_task import ScheduleTaskCapability
+from agentic_rl.capabilities.web_search import DdgsSearchPort, WebSearchCapability
 from agentic_rl.core import observability
 from agentic_rl.core.agent import Agent
 from agentic_rl.core.config import Settings, get_settings
@@ -37,7 +38,12 @@ def _build_planner(settings: Settings) -> Planner:
     # local import: only construct a provider client if a real LLM is actually needed
     from agentic_rl.llm.llm_planner import LLMPlanner
 
-    return LLMPlanner(provider=settings.planner, model=settings.llm_model)
+    return LLMPlanner(
+        provider=settings.planner,
+        model=settings.llm_model,
+        history_max_chars=settings.planner_history_max_chars,
+        max_steps=settings.max_steps,
+    )
 
 
 def _build_policy(settings: Settings) -> Policy:
@@ -77,7 +83,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     agent_box: dict[str, Agent] = {}
 
     async def _scheduled_runner(instruction: str) -> None:
-        await agent_box["agent"].run(instruction, source="scheduler")
+        with observability.trace("scheduler.run", input=instruction, source="scheduler"):
+            await agent_box["agent"].run(instruction, source="scheduler")
 
     scheduler = AgentScheduler(settings.db_path, _scheduled_runner)
 
@@ -86,6 +93,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         HttpCallCapability(http_client, timeout_s=settings.http_timeout_s, max_body_bytes=settings.http_max_body_bytes)
     )
     registry.register(ScheduleTaskCapability(scheduler))
+    registry.register(
+        WebSearchCapability(
+            DdgsSearchPort(),
+            max_results=settings.web_search_max_results,
+            timeout_s=settings.web_search_timeout_s,
+        )
+    )
 
     planner = _build_planner(settings)
     policy = _build_policy(settings)
@@ -119,6 +133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.agent = agent
     app.state.registry = registry
     app.state.memory = memory
+    app.state.background_tasks = set()  # keeps SSE worker tasks (api/routes.py) alive
 
     @app.get("/health")
     def health() -> dict[str, str]:

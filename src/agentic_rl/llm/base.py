@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from agentic_rl.core.models import Candidate, State
+from agentic_rl.core.models import Candidate, State, Step
 
 
 class Planner(ABC):
@@ -18,6 +18,7 @@ class Planner(ABC):
         tool_schemas: list[dict],
         prior_corrections: list[str],
         rules: list[str] | None = None,
+        history: list[Step] | None = None,
     ) -> list[Candidate]:
         """Return one or more candidate actions, most-likely-correct first.
 
@@ -30,5 +31,11 @@ class Planner(ABC):
         Memory, via core/memory.py MemoryStore.active_rules) — the user's binding
         instructions, distinct from `prior_corrections` which are episode-specific
         and only weakly related by keyword search.
+
+        `history` is the steps already executed in this episode (core/agent.py's
+        multi-step loop), empty/None on the first call. When non-empty, candidates
+        should build on those steps' outcomes (e.g. use a prior payload as this step's
+        params), never repeat a completed step, and propose the `answer` capability
+        with the final user-facing text once nothing further is needed.
         """
         ...

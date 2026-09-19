@@ -8,7 +8,11 @@ keeps 130+ existing tests network-free and deterministic without touching them �
 `setup()` is only ever invoked from `api/app.py`, gated on
 `Settings.observability_enabled` (default False).
 
-Two kinds of Langfuse observation are used:
+Three kinds of Langfuse observation are used:
+- `trace()` — the top-level root of a request. Created at the API/scheduler
+  boundary so that all nested spans and generations group under one trace.
+  Supports `session_id` to link related traces (e.g. run → confirm → feedback
+  on the same episode).
 - `span()` — a generic unit of work (an Agent method, the consolidator).
 - `generation()` — specifically an LLM call. This project calls the Claude API
   via `client.messages.parse()`, which posts directly rather than going through
@@ -66,14 +70,72 @@ def enabled() -> bool:
 
 
 @contextmanager
-def span(name: str, *, input: Any = None, **metadata: Any) -> Iterator[Any]:
-    """A generic Langfuse span, or a true no-op (yields None) when tracing isn't
-    active — safe to wrap around any block of code unconditionally."""
+def trace(
+    name: str,
+    *,
+    input: Any = None,
+    trace_id: str | None = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    **metadata: Any,
+) -> Iterator[Any]:
+    """Create an explicit Langfuse root trace — all `span()` and `generation()`
+    calls inside this context automatically nest as children via OTEL context.
+
+    If `trace_id` is supplied (e.g. the episode ID), the trace is assigned that
+    exact ID, allowing subsequent operations (like confirm or feedback) to attach
+    to the same trace.
+
+    `session_id` groups related traces in the Langfuse UI (e.g. all interactions
+    on the same episode: run → confirm → feedback). `user_id` is the Langfuse
+    user dimension. True no-op when tracing isn't active.
+
+    Implementation: `propagate_attributes()` sets trace-level attributes
+    (session_id, user_id, trace name) and a root `start_as_current_observation`
+    creates the top-level span whose auto-generated parent trace inherits them."""
     if _client is None:
         yield None
         return
+    from langfuse import propagate_attributes
+
+    trace_context = {"trace_id": trace_id} if trace_id else None
+
+    with propagate_attributes(
+        session_id=session_id, user_id=user_id, trace_name=name, metadata=metadata or None
+    ):
+        with _client.start_as_current_observation(
+            trace_context=trace_context,
+            as_type="span",
+            name=name,
+            input=input,
+            metadata=metadata or None,
+        ) as observation:
+            yield observation
+
+
+@contextmanager
+def span(
+    name: str,
+    *,
+    input: Any = None,
+    trace_id: str | None = None,
+    **metadata: Any,
+) -> Iterator[Any]:
+    """A generic Langfuse span, or a true no-op (yields None) when tracing isn't
+    active — safe to wrap around any block of code unconditionally.
+    If `trace_id` is provided and no parent span is active in the current context,
+    attaches to that trace ID.
+    """
+    if _client is None:
+        yield None
+        return
+    trace_context = {"trace_id": trace_id} if trace_id and not get_current_trace_id() else None
     with _client.start_as_current_observation(
-        as_type="span", name=name, input=input, metadata=metadata or None
+        trace_context=trace_context,
+        as_type="span",
+        name=name,
+        input=input,
+        metadata=metadata or None,
     ) as observation:
         yield observation
 
@@ -89,6 +151,27 @@ def generation(name: str, *, model: str, input: Any = None) -> Iterator[Any]:
         as_type="generation", name=name, model=model, input=input
     ) as observation:
         yield observation
+
+
+def get_current_trace_id() -> str | None:
+    """Return the current Langfuse trace ID, or None when tracing isn't active.
+    Useful for propagating trace context across thread boundaries (e.g. to the
+    scheduler's background thread)."""
+    if _client is None:
+        return None
+    tid = _client.get_current_trace_id()
+    if tid is not None:
+        return tid
+    try:
+        from opentelemetry import trace as otel_trace
+
+        current_span = otel_trace.get_current_span()
+        ctx = current_span.get_span_context()
+        if ctx.is_valid:
+            return f"{ctx.trace_id:032x}"
+    except Exception:
+        pass
+    return None
 
 
 def update_current_span(**fields: Any) -> None:

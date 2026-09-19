@@ -1,19 +1,60 @@
 from __future__ import annotations
 
-SYSTEM_PROMPT = """\
-You are the planning component of an agent that executes a small set of predefined \
-capabilities on the user's behalf: making HTTP calls and scheduling tasks to run later.
+import json
 
-For each request, propose 1-3 candidate actions, ordered most-likely-correct first. \
-Each candidate names exactly one capability and its parameters. Set `needs_confirmation` \
-to true for any action with side effects that would be costly or awkward to undo \
-(e.g. a POST/PUT/PATCH/DELETE http_call, or a recurring schedule_task) unless the \
-request very explicitly asked for exactly that action. Set `confidence` to your honest \
-estimate (0-1) that this candidate is what the user wants.
+from agentic_rl.core.models import Step
+
+SYSTEM_PROMPT = """\
+You are the planning component of an agent that answers requests by executing a small \
+set of predefined capabilities, one step at a time. Each call to you proposes only the \
+next step: 1-3 candidate actions, ordered most-likely-correct first, given the request \
+and — after the first step — the outcomes of the steps already taken.
+
+Each candidate names exactly one capability and its parameters. Build a later step's \
+parameters from an earlier step's outcome when the request requires it (e.g. use a \
+prior payload's field as this step's input) — you will be shown a summary of every \
+prior step and its outcome. Never propose a step identical to one already completed.
+
+Set `needs_confirmation` to true for any action with side effects that would be costly \
+or awkward to undo (e.g. a POST/PUT/PATCH/DELETE http_call, or a recurring \
+schedule_task) unless the request very explicitly asked for exactly that action. Set \
+`confidence` to your honest estimate (0-1) that this candidate is what the user wants.
+
+Once you have everything needed to respond — including when the request needs no \
+capability call at all — propose the `answer` capability with `text` set to the final, \
+complete reply to show the user. Never invent capabilities that weren't listed.
 
 You will sometimes be shown corrections from past interactions where a previous \
 candidate was wrong. Treat these as binding instructions for this user: do not repeat \
 a corrected mistake."""
+
+
+def render_history(steps: list[Step], max_chars: int, steps_remaining: int | None = None) -> str:
+    """Steps already executed in this episode's loop (core/agent.py `_advance`),
+    rendered so the planner can chain an outcome into the next step's params and
+    knows what's already been tried. Empty until the loop's second call.
+
+    `steps_remaining` is `settings.max_steps - len(steps)`; when it's exactly 1 a
+    reminder is appended that this is the last step, since the loop won't call the
+    planner again after it.
+    """
+    if not steps:
+        return ""
+    lines = ["\n\nSteps completed so far:"]
+    for step in steps:
+        candidate = step.action.candidate
+        outcome = step.outcome
+        header = f"step {step.index + 1}: {candidate.capability}({candidate.params})"
+        if outcome is None:
+            lines.append(f"{header} -> pending confirmation")
+        elif outcome.ok:
+            payload = json.dumps(outcome.payload, default=str)[:max_chars]
+            lines.append(f"{header} -> ok (status {outcome.status})\n  payload: {payload}")
+        else:
+            lines.append(f"{header} -> error: {outcome.error}")
+    if steps_remaining == 1:
+        lines.append("\nThis is the last allowed step: you must propose `answer`.")
+    return "\n".join(lines)
 
 
 def render_corrections(prior_corrections: list[str]) -> str:

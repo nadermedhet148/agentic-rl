@@ -10,31 +10,57 @@ then run these from another terminal. Replace `<episode_id>`/`<job_id>`/`<memory
 with real ids from the response just before each step — they're randomly generated
 per run.
 
+An episode is a sequence of **steps** (plan → select → confirm-gate → execute →
+observe), each with its own `candidates`/`action`/`outcome`, ending in an `answer`
+step once the agent has enough to reply (or at `AGENTIC_RL_MAX_STEPS`, `answer=null`).
+`POST /chat` and `POST /confirm/{episode_id}` below are the plain blocking calls —
+they return once the whole run finishes or pauses; `POST /chat/stream` and
+`POST /confirm/{episode_id}/stream` (used by the web UI) return the same steps as
+Server-Sent Events (`event: step` per step, `event: done` with the final `Episode`)
+as they happen — see case 15.
+
 **Cost note:** with `AGENTIC_RL_PLANNER` set to `claude`/`openai`/`google`, every
 `/chat` call is a real, billed LLM request. Set `AGENTIC_RL_PLANNER=mock` in
 `.env` for free, offline runs of everything except the "provider switching"
 section — the mock planner's heuristic (`llm/mock.py:heuristic_default_fn`)
 still exercises the same code paths, just without real reasoning.
 
-## 1. Read-tier action — auto-executes, no confirmation
+## 1. Read-tier action — auto-executes, then the agent answers
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
   -d '{"message":"fetch https://httpbin.org/json"}'
 ```
-Expect: `"status":"executed"`, `"outcome":{"ok":true,...}` — a GET is read-tier,
-so it runs immediately (see `core/agent.py:_needs_confirmation`).
+Expect two steps: a GET is read-tier so it runs immediately (see
+`core/agent.py:_needs_confirmation`), and the agent's loop (`core/agent.py:_advance`)
+plans again with that outcome in view and proposes `answer`. A real run against
+Gemini returned:
+```json
+{
+  "status": "executed",
+  "steps": [
+    {"index": 0, "action": {"candidate": {"capability": "http_call", "params": {"url": "https://httpbin.org/json", "method": "GET"}}}, "outcome": {"ok": true, "status": "200", "payload": {"slideshow": {"title": "Sample Slide Show", "...": "..."}}}},
+    {"index": 1, "action": {"candidate": {"capability": "answer", "params": {"text": "Here is the JSON response from https://httpbin.org/json:\n\n```json\n{...}\n```"}}}, "outcome": {"ok": true, "payload": {"text": "..."}}}
+  ],
+  "answer": "Here is the JSON response from https://httpbin.org/json:\n\n```json\n{...}\n```"
+}
+```
+`steps[0].outcome.payload` is the raw `http_call` response; `answer` (top-level,
+also `steps[1].outcome.payload.text`) is the agent's natural-language reply — this
+is what the web UI shows as the highlighted answer bubble.
 
 ## 2. Write-tier action the model flags — needs confirmation, then confirm
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
   -d '{"message":"delete the order at https://httpbin.org/delete"}'
-# -> {"status":"pending_confirmation", "action":{"candidate":{"needs_confirmation":true,...}}, "id":"<episode_id>", ...}
+# -> {"status":"pending_confirmation", "steps":[{"outcome":null,"action":{"candidate":{"needs_confirmation":true,...}}}], "id":"<episode_id>", ...}
 
 curl -s -X POST http://127.0.0.1:8000/confirm/<episode_id>
-# -> {"status":"executed", "outcome":{"ok":true,...}}
+# -> {"status":"executed", "steps":[{"outcome":{"ok":true,...}}, {"action":{"candidate":{"capability":"answer",...}}}], "answer":"..."}
 ```
+Confirming resumes the loop rather than ending the episode — the response has a
+second (`answer`) step appended, same as case 1.
 Confirming twice, or an unknown episode id, are also worth trying:
 ```bash
 curl -s -X POST http://127.0.0.1:8000/confirm/<episode_id>   # second time -> 409
@@ -117,7 +143,7 @@ answer didn't satisfy the user (`rl/reward.py: REISSUED`, applied in
 ```bash
 curl -s -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
   -d '{"message":"every day at 9am fetch https://httpbin.org/json"}'
-# -> outcome.payload.job_id
+# -> steps[0].outcome.payload.job_id (the schedule_task step; step 1 is the answer)
 
 curl -s http://127.0.0.1:8000/tasks
 # -> [{"id":"<job_id>","instruction":"...","next_run_time":"..."}]
@@ -166,8 +192,9 @@ name that isn't registered at all, that's *also* forced to
 Confirming it then fails safely rather than crashing:
 ```bash
 curl -s -X POST http://127.0.0.1:8000/confirm/<episode_id>
-# -> {"status":"executed", "outcome":{"ok":false,"error":"ConnectError: ..."}}
-# (or "unknown capability: ..." if the model proposed an unregistered capability name)
+# -> {"status":"executed", "steps":[{"outcome":{"ok":false,"error":"ConnectError: ..."}}, {"action":{"candidate":{"capability":"answer",...}}}]}
+# (or "unknown capability: ..." if the model proposed an unregistered capability name;
+#  either way the loop still continues to an `answer` step summarizing the failure)
 ```
 
 ## 11. Episodes, metrics, and rules — the read-only views
@@ -204,5 +231,35 @@ same "the model didn't flag it" schedule_task request should now come back
 
 No separate test — every case above already produces a trace when this is on.
 Check your Langfuse project: one `agent.run`/`agent.confirm`/`agent.feedback`
-trace per request above, with a nested `{provider}.plan`/`{provider}.distill`
-generation wherever a real LLM call happened. See `docs/OBSERVABILITY.md`.
+trace per request above, with a nested `agent.step` span per step (each wrapping
+a `{provider}.plan` generation, plus a `{provider}.distill` generation on cases
+with a correction). See `docs/OBSERVABILITY.md`.
+
+## 15. Streaming a multi-step run (`/chat/stream`) — what the web UI actually uses
+
+```bash
+curl -sN -X POST http://127.0.0.1:8000/chat/stream -H "Content-Type: application/json" \
+  -d '{"message":"what is langfuse"}'
+```
+A real run streamed three `event: step` lines (`web_search` twice — the model
+noticed its first query returned generic results and retried with a better one —
+then `answer`) followed by one `event: done` carrying the finished `Episode`:
+```
+event: step
+data: {"index":0,"action":{"candidate":{"capability":"web_search","params":{"query":"langfuse"},...}},"outcome":{"ok":true,"payload":{"results":[...]}}}
+
+event: step
+data: {"index":1,"action":{"candidate":{"capability":"web_search","params":{"query":"langfuse LLM observability platform"},...}},"outcome":{"ok":true,...}}
+
+event: step
+data: {"index":2,"action":{"candidate":{"capability":"answer","params":{"text":"**Langfuse** is an open-source AI engineering platform..."}}},"outcome":{"ok":true,...}}
+
+event: done
+data: {"id":"...","status":"executed","answer":"**Langfuse** is an open-source AI engineering platform...","steps":[...]}
+```
+A step whose action needs confirmation streams the same way, then the connection
+ends without a `done` event (the loop paused) — the client confirms via
+`POST /confirm/{episode_id}/stream`, which streams the rest of the loop the same
+way and *does* end in `done`. `/confirm/{episode_id}/stream` 404s on an unknown
+episode and 409s if it isn't `pending_confirmation`, checked before the stream
+opens (unlike a mid-stream failure, which arrives as `event: error`).

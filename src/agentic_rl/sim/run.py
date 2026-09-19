@@ -12,7 +12,7 @@ from agentic_rl.capabilities.schedule_task import ScheduleTaskCapability
 from agentic_rl.core.agent import Agent
 from agentic_rl.core.config import Mode, Settings
 from agentic_rl.core.memory import Consolidator, MemoryStore
-from agentic_rl.core.models import Candidate, Feedback, State
+from agentic_rl.core.models import Candidate, Feedback, State, Step
 from agentic_rl.core.store import EpisodeStore
 from agentic_rl.llm.distiller import MockDistiller
 from agentic_rl.llm.mock import MockPlanner
@@ -71,7 +71,9 @@ REQUESTS: list[tuple[str, callable]] = [
 ]
 
 
-def _default_fn(state: State) -> list[Candidate]:
+def _default_fn(state: State, history: list[Step]) -> list[Candidate]:
+    if history:
+        return [Candidate(capability="answer", params={"text": "done"}, confidence=0.9)]
     for _request, builder in REQUESTS:
         if _request == state.request:
             return builder()
@@ -114,7 +116,7 @@ async def run_simulation(policy_id: str, episodes: int, seed: int = 0) -> tuple[
         episode = await agent.run(request, source="user")
         if episode.status == "pending_confirmation":
             episode = await agent.confirm(episode.id)
-        score, correction = user.grade(episode.action.candidate)
+        score, correction = user.grade(episode.steps[0].action.candidate)
         updated = await agent.record_feedback(Feedback(episode_id=episode.id, score=score, correction=correction))
         rewards.append(updated.final_reward)
 

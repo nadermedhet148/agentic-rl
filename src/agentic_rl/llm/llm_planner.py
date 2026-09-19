@@ -10,10 +10,10 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedMode
 from pydantic_ai.models import Model
 
 from agentic_rl.core import observability
-from agentic_rl.core.models import Candidate, State
+from agentic_rl.core.models import Candidate, State, Step
 from agentic_rl.llm import providers
 from agentic_rl.llm.base import Planner
-from agentic_rl.llm.prompts import SYSTEM_PROMPT, render_corrections, render_rules
+from agentic_rl.llm.prompts import SYSTEM_PROMPT, render_corrections, render_history, render_rules
 
 
 class _PlanResponse(BaseModel):
@@ -38,10 +38,14 @@ class LLMPlanner(Planner):
         provider: str = "claude",
         model: str = "claude-opus-5",
         pydantic_model: Model | None = None,
+        history_max_chars: int = 4000,
+        max_steps: int = 6,
     ):
         self.id = provider  # instance attr, not class attr — shows up on Episode.planner_id
         self._model_name = model
         self._span_name = f"{provider}.plan"
+        self._history_max_chars = history_max_chars
+        self._max_steps = max_steps
         resolved_model = pydantic_model or providers.build_model(provider, model)
         self._agent = Agent(
             resolved_model,
@@ -56,7 +60,9 @@ class LLMPlanner(Planner):
         tool_schemas: list[dict],
         prior_corrections: list[str],
         rules: list[str] | None = None,
+        history: list[Step] | None = None,
     ) -> list[Candidate]:
+        history = history or []
         capabilities_block = "\n\n".join(
             f"- {schema['name']}: {schema['description']}\n  input_schema: {schema['input_schema']}"
             for schema in tool_schemas
@@ -64,6 +70,7 @@ class LLMPlanner(Planner):
         user_content = (
             f"Available capabilities:\n{capabilities_block}\n\n"
             f"Request (source={state.source}): {state.request}"
+            f"{render_history(history, self._history_max_chars, self._max_steps - len(history))}"
             f"{render_rules(rules or [])}"
             f"{render_corrections(prior_corrections)}"
         )
@@ -95,14 +102,4 @@ class LLMPlanner(Planner):
                 usage_details=observability.usage_details(result),
             )
 
-        if not candidates:
-            return [
-                Candidate(
-                    capability="",
-                    params={},
-                    rationale="planner returned no candidates",
-                    confidence=0.0,
-                    needs_confirmation=True,
-                )
-            ]
         return candidates

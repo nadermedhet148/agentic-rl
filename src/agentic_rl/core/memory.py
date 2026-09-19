@@ -183,10 +183,14 @@ class Consolidator:
 
     async def consolidate(self, correction: str, episode: Episode) -> Memory:
         existing = self._memory.search(correction, limit=5)
-        if episode.action.candidate.capability:
+        capabilities = {
+            s.action.candidate.capability for s in episode.steps if s.action.candidate.capability != "answer"
+        }
+        capabilities.discard("")
+        for capability in capabilities:
             existing += [
                 m
-                for m in self._memory.active_rules(limit=10, capability=episode.action.candidate.capability)
+                for m in self._memory.active_rules(limit=10, capability=capability)
                 if m.id not in {e.id for e in existing}
             ]
 

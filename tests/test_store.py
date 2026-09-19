@@ -4,9 +4,9 @@ import sqlite3
 
 import pytest
 
-from agentic_rl.core.models import Action, Candidate, Episode, Feedback, Outcome, State
+from agentic_rl.core.models import Action, Candidate, Episode, Feedback, Outcome, State, Step
 from agentic_rl.core.store import EpisodeStore
-from agentic_rl.rl.export import episode_to_record, export_jsonl
+from agentic_rl.rl.export import episode_to_records, export_jsonl
 
 
 def make_episode(
@@ -19,11 +19,10 @@ def make_episode(
     candidate = Candidate(capability=capability, params={"method": "GET", "url": "https://x"}, confidence=0.8)
     action = Action(candidate=candidate, index=0, explored=False, arm_id=f"{capability}:abc:False")
     outcome = None if outcome_ok is None else Outcome(ok=outcome_ok, status="200" if outcome_ok else "500")
+    step = Step(index=0, candidates=[candidate], action=action, outcome=outcome)
     return Episode(
         state=State(request=request),
-        candidates=[candidate],
-        action=action,
-        outcome=outcome,
+        steps=[step],
         implicit_reward=0.2 if outcome_ok else -0.5,
         correction=correction,
         explicit_score=explicit_score,
@@ -153,17 +152,18 @@ def test_save_is_upsert(store):
 # --- export -----------------------------------------------------------------
 
 
-def test_episode_to_record_shapes_chosen_and_rejected():
+def test_episode_to_records_shapes_chosen_and_rejected():
     alt = Candidate(capability="http_call", params={"method": "POST", "url": "https://x"})
     episode = make_episode()
-    episode.candidates = [episode.action.candidate, alt]
-    record = episode_to_record(episode)
-    assert record["chosen"]["capability"] == "http_call"
-    assert len(record["rejected"]) == 1
-    assert record["reward"] == pytest.approx(0.2)
+    episode.steps[0].candidates = [episode.steps[0].action.candidate, alt]
+    records = episode_to_records(episode)
+    assert len(records) == 1
+    assert records[0]["chosen"]["capability"] == "http_call"
+    assert len(records[0]["rejected"]) == 1
+    assert records[0]["reward"] == pytest.approx(0.2)
 
 
-def test_export_jsonl_writes_one_line_per_episode(tmp_path, store):
+def test_export_jsonl_writes_one_line_per_step(tmp_path, store):
     store.save(make_episode())
     store.save(make_episode())
     episodes = store.list_episodes(limit=10)
@@ -278,8 +278,8 @@ def test_fts_rebuilds_hosts_column_from_pre_existing_episodes(tmp_path):
            policy_id, job_id, data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             old_episode.id, old_episode.created_at.isoformat(), old_episode.state.request,
-            old_episode.state.source, old_episode.action.candidate.capability,
-            old_episode.action.arm_id, old_episode.status, 1, old_episode.implicit_reward,
+            old_episode.state.source, old_episode.steps[0].action.candidate.capability,
+            old_episode.steps[0].action.arm_id, old_episode.status, 1, old_episode.implicit_reward,
             old_episode.explicit_score, old_episode.correction, old_episode.final_reward,
             old_episode.planner_id, old_episode.policy_id, None, old_episode.model_dump_json(),
         ),

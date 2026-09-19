@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from agentic_rl.capabilities.base import Outcome, Tier
 
-__all__ = ["Action", "Candidate", "Episode", "Feedback", "Memory", "Outcome", "State", "Tier"]
+__all__ = ["Action", "Candidate", "Episode", "Feedback", "Memory", "Outcome", "State", "Step", "Tier"]
 
 
 def _now() -> datetime:
@@ -56,21 +56,33 @@ class Feedback(BaseModel):
     correction: str | None = None
 
 
+class Step(BaseModel):
+    """One plan -> select -> (confirm) -> execute pass within an episode's loop."""
+
+    index: int
+    candidates: list[Candidate]
+    action: Action
+
+    outcome: Outcome | None = None  # None while pending_confirmation
+    implicit_reward: float = 0.0
+
+
 class Episode(BaseModel):
-    """Full record of one agent-loop pass: what was asked, proposed, chosen, and how it went.
+    """Full record of one agent-loop run: a request answered by a sequence of steps
+    (plan -> select -> confirm-gate -> execute -> observe, repeated) ending either in an
+    `answer` step or at settings.max_steps.
 
     This is both the operational log (drives the reward-weighted policy update) and the
-    future fine-tuning dataset (chosen vs. rejected candidates) — see rl/export.py.
+    future fine-tuning dataset (chosen vs. rejected candidates per step) — see rl/export.py.
     """
 
     id: str = Field(default_factory=_new_id)
     created_at: datetime = Field(default_factory=_now)
 
     state: State
-    candidates: list[Candidate]
-    action: Action
+    steps: list[Step] = Field(default_factory=list)
+    answer: str | None = None  # set once the `answer` capability executes
 
-    outcome: Outcome | None = None
     status: Literal["pending_confirmation", "executed", "cancelled"] = "executed"
 
     implicit_reward: float = 0.0

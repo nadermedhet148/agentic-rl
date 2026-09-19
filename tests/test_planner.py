@@ -9,10 +9,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from agentic_rl.core import observability
-from agentic_rl.core.models import Candidate, State
+from agentic_rl.core.models import Action, Candidate, Outcome, State, Step
 from agentic_rl.llm.llm_planner import LLMPlanner
 from agentic_rl.llm.mock import MockPlanner, heuristic_default_fn
-from agentic_rl.llm.prompts import render_corrections, render_rules
+from agentic_rl.llm.prompts import render_corrections, render_history, render_rules
 
 # --- MockPlanner -------------------------------------------------------------
 
@@ -41,7 +41,7 @@ async def test_mock_planner_falls_back_to_default():
 
 @pytest.mark.asyncio
 async def test_mock_planner_default_fn_receives_state():
-    def default_fn(state: State) -> list[Candidate]:
+    def default_fn(state: State, history: list[Step]) -> list[Candidate]:
         return [Candidate(capability="http_call", params={"method": "GET", "url": state.request})]
 
     planner = MockPlanner(default_fn=default_fn)
@@ -50,11 +50,33 @@ async def test_mock_planner_default_fn_receives_state():
     assert result[0].params["url"] == "https://example.com"
 
 
+@pytest.mark.asyncio
+async def test_mock_planner_uses_default_fn_history_arg_once_a_step_has_run():
+    seen: list[list[Step]] = []
+
+    def default_fn(state: State, history: list[Step]) -> list[Candidate]:
+        seen.append(history)
+        return [Candidate(capability="answer", params={"text": "done"})]
+
+    planner = MockPlanner(default_fn=default_fn)
+    step = Step(
+        index=0,
+        candidates=[Candidate(capability="http_call", params={})],
+        action=Action(candidate=Candidate(capability="http_call", params={}), index=0, explored=False, arm_id="a"),
+        outcome=Outcome(ok=True, status="200"),
+    )
+
+    result = await planner.plan(State(request="x"), [], [], history=[step])
+
+    assert seen == [[step]]
+    assert result[0].capability == "answer"
+
+
 # --- heuristic_default_fn -----------------------------------------------------
 
 
 def test_heuristic_default_fn_infers_get_from_url():
-    result = heuristic_default_fn(State(request="fetch https://httpbin.org/json please"))
+    result = heuristic_default_fn(State(request="fetch https://httpbin.org/json please"), [])
     assert result[0].capability == "http_call"
     assert result[0].params["method"] == "GET"
     assert result[0].params["url"] == "https://httpbin.org/json"
@@ -62,29 +84,40 @@ def test_heuristic_default_fn_infers_get_from_url():
 
 
 def test_heuristic_default_fn_infers_post_from_wording():
-    result = heuristic_default_fn(State(request="create a new order at https://api.example.com/orders"))
+    result = heuristic_default_fn(State(request="create a new order at https://api.example.com/orders"), [])
     assert result[0].params["method"] == "POST"
     assert result[0].needs_confirmation is True
 
 
 def test_heuristic_default_fn_infers_delete_from_wording():
-    result = heuristic_default_fn(State(request="delete the record at https://api.example.com/items/5"))
+    result = heuristic_default_fn(State(request="delete the record at https://api.example.com/items/5"), [])
     assert result[0].params["method"] == "DELETE"
 
 
 def test_heuristic_default_fn_strips_trailing_punctuation_from_url():
-    result = heuristic_default_fn(State(request="check https://example.com/x, then report back."))
+    result = heuristic_default_fn(State(request="check https://example.com/x, then report back."), [])
     assert result[0].params["url"] == "https://example.com/x"
 
 
 def test_heuristic_default_fn_infers_schedule_task():
-    result = heuristic_default_fn(State(request="schedule a daily health check"))
+    result = heuristic_default_fn(State(request="schedule a daily health check"), [])
     assert result[0].capability == "schedule_task"
     assert result[0].needs_confirmation is True
 
 
 def test_heuristic_default_fn_falls_back_to_no_candidates():
-    assert heuristic_default_fn(State(request="what's the weather like")) == []
+    assert heuristic_default_fn(State(request="what's the weather like"), []) == []
+
+
+def test_heuristic_default_fn_answers_once_a_step_has_run():
+    step = Step(
+        index=0,
+        candidates=[Candidate(capability="http_call", params={})],
+        action=Action(candidate=Candidate(capability="http_call", params={}), index=0, explored=False, arm_id="a"),
+        outcome=Outcome(ok=True, status="200"),
+    )
+    result = heuristic_default_fn(State(request="fetch https://x"), [step])
+    assert result[0].capability == "answer"
 
 
 # --- prompts -----------------------------------------------------------------
@@ -110,6 +143,61 @@ def test_render_rules_renders_bullets():
     assert "Accept: application/json" in rendered
     assert "Standing rules" in rendered
     assert rendered.startswith("\n\n")
+
+
+def test_render_history_empty():
+    assert render_history([], max_chars=4000) == ""
+
+
+def test_render_history_renders_ok_step_with_payload():
+    candidate = Candidate(capability="http_call", params={"method": "GET", "url": "https://x"})
+    step = Step(
+        index=0,
+        candidates=[candidate],
+        action=Action(candidate=candidate, index=0, explored=False, arm_id="a"),
+        outcome=Outcome(ok=True, status="200", payload={"value": 1}),
+    )
+    rendered = render_history([step], max_chars=4000)
+    assert "step 1: http_call(" in rendered
+    assert "-> ok (status 200)" in rendered
+    assert '"value": 1' in rendered
+
+
+def test_render_history_renders_failed_step():
+    candidate = Candidate(capability="http_call", params={"method": "GET", "url": "https://x"})
+    step = Step(
+        index=0,
+        candidates=[candidate],
+        action=Action(candidate=candidate, index=0, explored=False, arm_id="a"),
+        outcome=Outcome(ok=False, error="boom"),
+    )
+    rendered = render_history([step], max_chars=4000)
+    assert "-> error: boom" in rendered
+
+
+def test_render_history_truncates_payload():
+    candidate = Candidate(capability="http_call", params={})
+    step = Step(
+        index=0,
+        candidates=[candidate],
+        action=Action(candidate=candidate, index=0, explored=False, arm_id="a"),
+        outcome=Outcome(ok=True, status="200", payload={"text": "x" * 100}),
+    )
+    rendered = render_history([step], max_chars=20)
+    payload_line = next(line for line in rendered.splitlines() if "payload:" in line)
+    assert len(payload_line) <= len("  payload: ") + 20
+
+
+def test_render_history_reminds_on_last_allowed_step():
+    candidate = Candidate(capability="http_call", params={})
+    step = Step(
+        index=0,
+        candidates=[candidate],
+        action=Action(candidate=candidate, index=0, explored=False, arm_id="a"),
+        outcome=Outcome(ok=True, status="200"),
+    )
+    rendered = render_history([step], max_chars=4000, steps_remaining=1)
+    assert "last allowed step" in rendered
 
 
 # --- LLMPlanner (PydanticAI Agent + provider Model) ---------------------------
@@ -165,15 +253,57 @@ async def test_claude_planner_includes_rules_before_corrections_in_prompt():
 
 
 @pytest.mark.asyncio
-async def test_claude_planner_handles_empty_candidates():
+async def test_claude_planner_returns_empty_candidates_unchanged():
+    # core/agent.py owns the empty-candidates fallback (step 0 -> _NO_CANDIDATE,
+    # step n>0 -> stop the loop) — the planner itself just relays what the model said.
     model = TestModel(custom_output_args={"candidates": []})
     planner = LLMPlanner(pydantic_model=model)
 
     result = await planner.plan(State(request="???"), [], [])
 
-    assert len(result) == 1
-    assert result[0].confidence == 0.0
-    assert result[0].needs_confirmation is True
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_claude_planner_can_return_an_answer_candidate():
+    model = TestModel(custom_output_args={"candidates": [{"capability": "answer", "params": {"text": "hi"}}]})
+    planner = LLMPlanner(pydantic_model=model)
+
+    result = await planner.plan(State(request="hello"), [], [])
+
+    assert result == [Candidate(capability="answer", params={"text": "hi"})]
+
+
+@pytest.mark.asyncio
+async def test_claude_planner_renders_history_between_request_and_rules():
+    captured: dict[str, list[ModelMessage]] = {}
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured["messages"] = messages
+        return ModelResponse(parts=[TextPart(content=_plan_response_json([]))])
+
+    planner = LLMPlanner(pydantic_model=FunctionModel(capture))
+    candidate = Candidate(capability="http_call", params={"method": "GET", "url": "https://x"})
+    step = Step(
+        index=0,
+        candidates=[candidate],
+        action=Action(candidate=candidate, index=0, explored=False, arm_id="a"),
+        outcome=Outcome(ok=True, status="200", payload={"value": 1}),
+    )
+
+    await planner.plan(
+        State(request="fetch https://x"),
+        [],
+        prior_corrections=[],
+        rules=["always send Accept: application/json"],
+        history=[step],
+    )
+
+    user_content = captured["messages"][0].parts[0].content
+    assert "Steps completed so far" in user_content
+    assert "step 1: http_call(" in user_content
+    assert user_content.index("Request (") < user_content.index("Steps completed so far")
+    assert user_content.index("Steps completed so far") < user_content.index("Standing rules")
 
 
 @pytest.mark.asyncio

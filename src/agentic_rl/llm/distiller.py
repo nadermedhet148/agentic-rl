@@ -67,10 +67,13 @@ class LLMDistiller(Distiller):
         )
 
     async def distill(self, correction: str, episode: Episode, existing: list[Memory]) -> DistillResult:
-        action = episode.action.candidate
+        actions = "\n".join(
+            f"{i + 1}. {s.action.candidate.capability} with params {s.action.candidate.params}"
+            for i, s in enumerate(episode.steps)
+        )
         user_content = (
             f"Original request: {episode.state.request}\n"
-            f"Action taken: {action.capability} with params {action.params}\n"
+            f"Actions taken:\n{actions}\n"
             f"User's correction: {correction}"
             f"{render_existing_rules([(m.id, m.text) for m in existing])}"
         )

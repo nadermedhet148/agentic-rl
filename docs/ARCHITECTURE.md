@@ -27,6 +27,7 @@ graph TB
     subgraph External
         Claude["Claude API<br/>(via PydanticAI Agent + AnthropicModel)"]
         HTTP["Arbitrary HTTP endpoints<br/>(via http_call)"]
+        DDG["DuckDuckGo<br/>(via web_search, ddgs)"]
         Langfuse["Langfuse<br/>(traces, optional)"]
     end
 
@@ -40,6 +41,7 @@ graph TB
     Sched -->|reads/writes jobs| DB
     Agent -.->|plan / distill| Claude
     Agent -.->|execute http_call| HTTP
+    Agent -.->|execute web_search| DDG
     Agent -.->|"spans + generations<br/>(off by default)"| Langfuse
 ```
 
@@ -72,8 +74,12 @@ graph TB
     Registry["CapabilityRegistry<br/>(capabilities/registry.py)"]
     HttpCap["HttpCallCapability"]
     SchedCap["ScheduleTaskCapability"]
+    SearchCap["WebSearchCapability"]
+    AnswerCap["AnswerCapability<br/>(terminal step — Agent auto-registers it)"]
     Registry --- HttpCap
     Registry --- SchedCap
+    Registry --- SearchCap
+    Registry --- AnswerCap
 
     Store["EpisodeStore<br/>(core/store.py)"]
     Memory["MemoryStore<br/>(core/memory.py)"]
@@ -174,7 +180,7 @@ graph is a strict DAG and every collaborator is unit-testable alone.
 graph LR
     subgraph src/agentic_rl
         core["core/<br/>agent, models, store,<br/>memory, text, config"]
-        capabilities["capabilities/<br/>base, registry,<br/>http_call, schedule_task"]
+        capabilities["capabilities/<br/>base, registry,<br/>http_call, schedule_task,<br/>web_search, answer"]
         llm["llm/<br/>base, llm_planner, mock,<br/>distiller, prompts, providers"]
         policy["policy/<br/>base, features,<br/>linucb, epsilon, greedy"]
         rl["rl/<br/>reward, export"]
@@ -217,18 +223,25 @@ erDiagram
         text created_at
         text request
         text source
-        text capability
-        text arm_id
+        text capability "last step's capability (projection)"
+        text arm_id "last step's arm_id (projection)"
         text status
-        int outcome_ok
-        real implicit_reward
+        int outcome_ok "last step's outcome.ok (projection)"
+        real implicit_reward "mean of all steps' implicit_reward"
         int explicit_score
         text correction
         real final_reward
         text planner_id
         text policy_id
-        text job_id
-        text data "full Episode JSON"
+        text job_id "found by scanning steps for schedule_task"
+        text data "full Episode JSON: state, steps[], answer, ..."
+    }
+    episode_steps {
+        text episode_id PK, FK
+        int step_index PK
+        text capability
+        text arm_id
+        int outcome_ok
     }
     episodes_fts {
         text episode_id
@@ -264,6 +277,7 @@ erDiagram
     }
 
     episodes ||--o{ episodes_fts : "indexed by"
+    episodes ||--o{ episode_steps : "one row per Episode.steps[i]"
     memories ||--o{ memories_fts : "indexed by"
     memories |o--o| memories : "superseded_by"
     episodes ||--o{ memories : "source_episode_ids (logical, not FK)"
@@ -272,6 +286,12 @@ erDiagram
 `episodes_fts` and `memories_fts` are separate SQLite FTS5 virtual tables (not real
 foreign-keyed tables) kept in sync by `EpisodeStore.save()` / `MemoryStore._save()`
 on every write — see `core/text.py` for the shared tokenizer/ranking logic both use.
+`episode_steps` exists purely so `capability_success_rate(capability)` can average
+`outcome_ok` per step rather than per episode (an episode can execute the same
+capability in more than one step); the full per-step detail (candidates, params,
+rationale, outcome payload) lives only in `episodes.data`'s `steps` array —
+`episode_steps` is a denormalized projection, rewritten wholesale (delete + insert)
+on every `EpisodeStore.save()`, same as the `episodes` row's own projected columns.
 
 ## Runtime composition (`api/app.py:create_app`)
 
@@ -285,13 +305,14 @@ graph TB
     httpClient --> HttpCap2["HttpCallCapability"] --> registry
     create_app --> agentScheduler["AgentScheduler(db_path, scheduled_runner)"]
     agentScheduler --> SchedCap2["ScheduleTaskCapability"] --> registry
+    create_app --> SearchCap2["WebSearchCapability(DdgsSearchPort())"] --> registry
     create_app --> planner2["_build_planner(settings)<br/>Mock | Claude"]
     create_app --> policy2["_build_policy(settings)<br/>LinUCB | Epsilon | Greedy"]
     store -->|"load_policy_state(policy.id)"| policy2
     create_app --> distiller2["_build_distiller(settings)<br/>Mock | Claude"]
     memory --> consolidator["Consolidator(memory, distiller)"]
     distiller2 --> consolidator
-    planner2 --> agent2["Agent(...)"]
+    planner2 --> agent2["Agent(...)<br/>registers AnswerCapability if absent"]
     policy2 --> agent2
     registry --> agent2
     store --> agent2
@@ -299,6 +320,7 @@ graph TB
     consolidator --> agent2
     agent2 -.->|"forward ref: agent_box['agent']"| agentScheduler
     agent2 --> FastAPI["FastAPI app<br/>routes + lifespan"]
+    FastAPI --> bgTasks["app.state.background_tasks<br/>(SSE worker tasks — api/routes.py)"]
 ```
 
 The scheduler/agent construction has a genuine circular dependency (the scheduler

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from agentic_rl.core.memory import Consolidator, MemoryStore
-from agentic_rl.core.models import Action, Candidate, Episode, Outcome, State
+from agentic_rl.core.models import Action, Candidate, Episode, Outcome, State, Step
 from agentic_rl.core.store import EpisodeStore
 from agentic_rl.llm.distiller import Distiller, DistillResult, MockDistiller
 
@@ -11,11 +11,10 @@ from agentic_rl.llm.distiller import Distiller, DistillResult, MockDistiller
 def make_episode(request: str = "fetch orders from https://api.example.com/orders") -> Episode:
     candidate = Candidate(capability="http_call", params={"method": "GET", "url": "https://api.example.com/orders"})
     action = Action(candidate=candidate, index=0, explored=False, arm_id="http_call:abc:False")
+    step = Step(index=0, candidates=[candidate], action=action, outcome=Outcome(ok=True, status="200"))
     return Episode(
         state=State(request=request),
-        candidates=[candidate],
-        action=action,
-        outcome=Outcome(ok=True, status="200"),
+        steps=[step],
         implicit_reward=0.2,
         planner_id="mock",
         policy_id="linucb",

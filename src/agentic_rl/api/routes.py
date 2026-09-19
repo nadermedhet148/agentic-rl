@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agentic_rl.core.agent import Agent
+from agentic_rl.core import observability
+from agentic_rl.core.agent import Agent, EventCallback
 from agentic_rl.core.memory import MemoryStore
 from agentic_rl.core.models import Episode, Feedback, Memory
 from agentic_rl.core.store import EpisodeStore
@@ -41,25 +47,96 @@ def _memory(request: Request) -> MemoryStore:
 
 @router.post("/chat", response_model=Episode)
 async def chat(body: ChatRequest, request: Request) -> Episode:
-    return await _agent(request).run(body.message, source="user")
+    episode_id = uuid4().hex
+    with observability.trace("api.chat", input=body.message, trace_id=episode_id, session_id=episode_id):
+        return await _agent(request).run(body.message, source="user", episode_id=episode_id)
+
+
+def _sse(event: str, data: BaseModel | dict) -> str:
+    body = data.model_dump_json() if isinstance(data, BaseModel) else json.dumps(data)
+    return f"event: {event}\ndata: {body}\n\n"
+
+
+def _stream(request: Request, run: Callable[[EventCallback], Awaitable[Episode]]) -> StreamingResponse:
+    """Runs `run` (an agent.run/confirm call) in a detached background task so a
+    client disconnect never aborts a run mid-episode, relaying its on_event
+    callbacks plus a final done/error event through an asyncio.Queue as SSE."""
+    queue: asyncio.Queue[tuple[str, Any] | None] = asyncio.Queue()
+
+    async def worker() -> None:
+        try:
+            episode = await run(lambda name, data: queue.put_nowait((name, data)))
+            queue.put_nowait(("done", episode))
+        except Exception as exc:  # noqa: BLE001 - surfaced to the client as an SSE error event
+            queue.put_nowait(("error", {"detail": str(exc)}))
+        finally:
+            queue.put_nowait(None)
+
+    tasks: set = request.app.state.background_tasks
+    task = asyncio.create_task(worker())
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+    async def gen():
+        while (item := await queue.get()) is not None:
+            yield _sse(*item)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/chat/stream")
+async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
+    episode_id = uuid4().hex
+
+    async def run(on_event: EventCallback) -> Episode:
+        with observability.trace("api.chat", input=body.message, trace_id=episode_id, session_id=episode_id):
+            return await _agent(request).run(
+                body.message, source="user", episode_id=episode_id, on_event=on_event
+            )
+
+    return _stream(request, run)
+
+
+@router.post("/confirm/{episode_id}/stream")
+async def confirm_stream(episode_id: str, request: Request) -> StreamingResponse:
+    episode = _store(request).get(episode_id)
+    if episode is None:
+        raise HTTPException(status_code=404, detail=f"unknown episode: {episode_id}")
+    if episode.status != "pending_confirmation":
+        raise HTTPException(
+            status_code=409,
+            detail=f"episode {episode_id} is not pending confirmation (status={episode.status})",
+        )
+
+    async def run(on_event: EventCallback) -> Episode:
+        with observability.trace("api.confirm", input=episode_id, trace_id=episode_id, session_id=episode_id):
+            return await _agent(request).confirm(episode_id, on_event=on_event)
+
+    return _stream(request, run)
 
 
 @router.post("/confirm/{episode_id}", response_model=Episode)
 async def confirm(episode_id: str, request: Request) -> Episode:
-    try:
-        return await _agent(request).confirm(episode_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    with observability.trace("api.confirm", input=episode_id, trace_id=episode_id, session_id=episode_id):
+        try:
+            return await _agent(request).confirm(episode_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/feedback", response_model=Episode)
 async def feedback(body: Feedback, request: Request) -> Episode:
-    try:
-        return await _agent(request).record_feedback(body)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    with observability.trace("api.feedback", input=body.episode_id, trace_id=body.episode_id, session_id=body.episode_id):
+        try:
+            return await _agent(request).record_feedback(body)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/episodes", response_model=list[Episode])
