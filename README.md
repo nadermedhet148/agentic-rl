@@ -20,6 +20,33 @@ executed is picked by an RL policy** (LinUCB by default) that learns over time
 from 👍/👎/✏️ feedback which kind of action actually satisfies the user for a
 given request shape — see [docs/PLAN.md](docs/PLAN.md) for the full rationale.
 
+## What this is
+
+A single Python process (FastAPI + SQLite + APScheduler — no separate
+database, no worker process, no build step for the UI) that:
+
+- Executes a small set of **capabilities** — web search, arbitrary HTTP
+  calls, scheduled tasks, sandboxed Python execution, PDF report generation —
+  proposed by an LLM and picked by a learned policy (see "Why a bandit, not
+  just a bigger prompt?" below).
+- Is **model-agnostic**: `claude` / `openai` / `google` / `mock` behind one
+  `AGENTIC_RL_PLANNER` setting (`llm/providers.py`) — swap providers without
+  touching any other code.
+- Ships **three interchangeable RL policies** — `linucb` (default, learns
+  from context), `epsilon` (context-free baseline), `greedy` (a no-learning
+  control group, always takes the planner's top pick) — see
+  [docs/REINFORCEMENT-LEARNING.md](docs/REINFORCEMENT-LEARNING.md).
+- Remembers across four timescales: **procedural** (the bandit's learned
+  weights), **semantic** (standing rules distilled from your ✏️
+  corrections), **episodic** (keyword-searchable past corrections), and
+  **conversation** (an explicitly started/ended session's own turns,
+  summarized every 5) — see [docs/MEMORY-PLAN.md](docs/MEMORY-PLAN.md).
+- Streams every step live to the web UI over Server-Sent Events, and can
+  optionally trace every plan/execute/feedback call to Langfuse — see
+  [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
+- Ships a **simulator** (`sim/run.py`) that proves the bandit actually beats
+  "no learning" offline, in seconds, with no LLM calls and no network.
+
 ## Quickstart
 
 ```bash
@@ -75,6 +102,90 @@ and it's kept from growing unbounded by summarizing every 5 turns (see
 [docs/MEMORY-PLAN.md](docs/MEMORY-PLAN.md) "Session memory (v2)"). **End
 session** (or `POST /sessions/{id}/end`) goes back to session-less chat.
 
+## Why a bandit, not just a bigger prompt?
+
+The obvious alternative to a learned policy is: when something goes wrong,
+edit the system prompt (`llm/prompts.py:SYSTEM_PROMPT`) or add a few-shot
+example, and re-deploy. This project already does a version of that — every
+✏️ correction gets distilled into a **standing rule**
+(`core/memory.py:Consolidator`) and injected into the next prompt
+(`render_rules`) — but that alone isn't enough, which is why there's a bandit
+on top of it, not instead of it:
+
+- **Rules only capture what a user can articulate.** *"Always send an
+  `Accept` header to api.example.com"* is a rule someone can write down. *"Of
+  two otherwise-similar candidates, the one with this param shape tends to
+  work better for this kind of request"* isn't — nobody writes that
+  correction. The bandit turns plain implicit signal (did the call succeed?
+  did the user 👎 it?) into a numeric estimate per `(capability,
+  param-shape)` arm automatically — no one has to author anything.
+- **A prompt can't do calibrated exploration.** LinUCB's score is
+  `θᵀx + α·√(xᵀA⁻¹x)` — a learned mean *plus* a confidence bonus that
+  shrinks as an arm gets tried more (see
+  [docs/REINFORCEMENT-LEARNING.md](docs/REINFORCEMENT-LEARNING.md)). That's
+  a principled, bounded way to occasionally try an under-tested alternative
+  without gambling on a poorly-understood one. A static prompt has no
+  equivalent of "I've only seen this arm 3 times, get more signal before
+  trusting it" — an LLM re-reading the same instructions either always
+  plays it safe or, if told to "sometimes try something different," does so
+  with no actual guarantee about how much exploration is safe.
+- **Updates are O(1) and scoped, not global.** `Policy.update` is one rank-1
+  matrix update (`A += xxᵀ`, `b += reward·x`) for the single arm that just
+  got feedback — milliseconds, no redeploy, and it can't accidentally change
+  behavior for anything else. A rewritten sentence in a shared system prompt
+  has blast radius across every capability and every user at once; a bandit
+  update only moves that one arm's own weights.
+- **It scales without bloating the prompt.** If every learned preference had
+  to become prompt text, the prompt would grow without bound, cost more per
+  call, and eventually contradict itself. Numeric weights (`policy_state` —
+  one row per policy, an `A`/`b` matrix pair per arm) live entirely outside
+  the prompt; only the small number of already-deduplicated rules a
+  distiller has merged ever reach the prompt text at all.
+
+None of this replaces prompting — the planner still *proposes* every
+candidate through its own (corrections-aware) prompt. The bandit's job is
+narrower and complementary: given what the planner suggests, decide *which*
+suggestion to actually trust, using a kind of signal a prompt alone can't
+represent. See [docs/PLAN.md](docs/PLAN.md) for the original design decision
+and [docs/REINFORCEMENT-LEARNING.md](docs/REINFORCEMENT-LEARNING.md) for
+exactly how that decision gets made.
+
+## The web UI
+
+`http://127.0.0.1:8000` (`api/static/index.html` — one static page, vanilla
+JS, no build step) has five panels:
+
+- **Chat** (left) — the **Start/End session** control described above, the
+  running conversation, and an input box. Each reply is a live-updating card:
+  a per-step timeline (icon for the capability, its rationale, a collapsible
+  list of every candidate the planner considered with confidence bars and a
+  "chosen"/"explored" badge, its params, and its outcome), streamed in as
+  each step actually runs — you watch it plan → act → observe → plan again
+  in real time — ending in a highlighted answer bubble. A step that needs
+  confirmation (a write-tier action) pauses the card with a **Confirm**
+  button; a finished episode gets 👍 **Good** / 👎 **Bad** / ✏️ **Correct**
+  (the last opens an inline box for what it should have done instead).
+- **Reward** — the rolling mean reward over the last 100 episodes and a live
+  chart (Chart.js) of the underlying learning curve — this is the same
+  number `sim/run.py` prints when measuring the bandit offline, just live
+  against whatever you've actually been doing in the UI.
+- **Rules** — the standing rules distilled from your ✏️ corrections
+  (`core/memory.py`), each with a "seen ×N" badge (`support_count` —
+  how many times an equivalent correction has been made) and a ✕ to retire
+  one. You can also add a rule directly here without first triggering a
+  correction.
+- **Scheduled tasks** — every job created by a `schedule_task` step, its
+  next run time, and a **Cancel** button (cancelling penalizes the episode
+  that originally scheduled it, not the policy directly — see
+  [docs/REINFORCEMENT-LEARNING.md](docs/REINFORCEMENT-LEARNING.md)).
+- **Episodes** — a table of recent episodes (request, status, step count,
+  reward) refreshed every 15s, independent of what's still visible in the
+  Chat panel above (that log resets on page reload; this table is the
+  persisted view — `GET /episodes`).
+
+The mode shown next to the title in the header is `AGENTIC_RL_MODE`
+(`sim`/`dev`/`prod_strict`) — it's read-only in the UI, set via `.env`.
+
 ## Capabilities
 
 See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) for the full writeup
@@ -90,6 +201,9 @@ See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) for the full writeup
 | `answer` | read | the terminal step — the agent's own "I'm done, here's the reply" signal |
 
 ## Learn more
+
+Each doc below covers one layer in depth — start with whichever question
+you actually have, they cross-link to each other where they overlap.
 
 | Doc | What's in it |
 |---|---|
