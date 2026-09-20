@@ -101,6 +101,12 @@
     background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent);
     border-radius: 999px; padding: 0 6px; font-size: 10px; font-weight: 600;
   }
+  .session-control { display: flex; align-items: center; gap: 8px; }
+  .session-status { color: var(--muted); font-size: 12px; }
+  .session-badge {
+    background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent);
+    border-radius: 999px; padding: 0 6px; font-size: 10px; font-weight: 600; white-space: nowrap;
+  }
   .step-planning { color: var(--accent); }
   .step-planning .step-header { color: var(--accent); }
   .dots span { animation: blink 1.4s infinite; opacity: 0; }
@@ -112,6 +118,7 @@
     border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
     border-radius: 8px; padding: 10px; margin-top: 8px; white-space: pre-wrap; word-break: break-word;
   }
+  .answer a { color: var(--accent); font-weight: 600; text-decoration: underline; }
   .max-steps-note { color: var(--muted); font-style: italic; font-size: 12px; margin-top: 8px; }
   .feedback { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   button.secondary.selected { background: var(--accent); color: white; border-color: var(--accent); }
@@ -170,6 +177,10 @@
 <main>
   <section class="panel">
     <h2>Chat</h2>
+    <div id="session-control" class="session-control">
+      <button id="session-toggle-btn" class="secondary" type="button">Start session</button>
+      <span id="session-status" class="session-status"></span>
+    </div>
     <div id="chat-log"></div>
     <form id="chat-form">
       <input type="text" id="chat-input" placeholder="e.g. fetch https://httpbin.org/json" autocomplete="off" />
@@ -220,8 +231,42 @@
 const chatLog = document.getElementById("chat-log");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
+const sessionToggleBtn = document.getElementById("session-toggle-btn");
+const sessionStatus = document.getElementById("session-status");
 
 let chart = null;
+let currentSessionId = null;
+let currentSessionTurns = 0;
+
+function renderSessionControl() {
+  if (currentSessionId) {
+    sessionToggleBtn.textContent = "End session";
+    sessionStatus.textContent = `Session active · turn ${currentSessionTurns}`;
+  } else {
+    sessionToggleBtn.textContent = "Start session";
+    sessionStatus.textContent = "";
+  }
+}
+
+sessionToggleBtn.addEventListener("click", async () => {
+  sessionToggleBtn.disabled = true;
+  try {
+    if (currentSessionId) {
+      await api(`/sessions/${currentSessionId}/end`, { method: "POST" });
+      currentSessionId = null;
+      currentSessionTurns = 0;
+    } else {
+      const session = await api("/sessions", { method: "POST" });
+      currentSessionId = session.id;
+      currentSessionTurns = 0;
+    }
+  } finally {
+    sessionToggleBtn.disabled = false;
+  }
+  renderSessionControl();
+});
+
+renderSessionControl();
 
 async function api(path, options) {
   const res = await fetch(path, options);
@@ -235,6 +280,19 @@ async function api(path, options) {
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+// Turns markdown-style [text](url) links in an LLM answer into real, clickable
+// <a> tags — the planner routinely writes these (e.g. pointing at a
+// generate_report output) but nothing rendered them, so they showed up as
+// literal text with no way to click through. Escapes first, then links only
+// http(s):// or same-site "/" paths (never javascript:/data:/etc — the answer
+// text isn't fully trusted, it can echo back web_search/http_call content).
+function linkifyAnswer(text) {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/\[([^\[\]]+)\]\((https?:\/\/[^\s()]+|\/[^\s()]+)\)/g, (_match, label, url) => (
+    `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`
   ));
 }
 
@@ -347,7 +405,7 @@ function renderEpisodeCard(episode) {
     ? `<span class="path">${steps.map((s) => capabilityIcon(s.action.candidate.capability)).join(" &rarr; ")}</span>`
     : "";
   const answerHtml = episode.answer
-    ? `<div class="answer">${escapeHtml(episode.answer)}</div>`
+    ? `<div class="answer">${linkifyAnswer(episode.answer)}</div>`
     : episode.status === "executed"
       ? `<div class="max-steps-note">Stopped without a final answer.</div>`
       : "";
@@ -355,12 +413,15 @@ function renderEpisodeCard(episode) {
     ? `<div class="outcome bad"><b>error:</b> ${escapeHtml(episode.error || "unknown error")}</div>`
     : "";
 
+  const sessionBadge = episode.session_id ? `<span class="session-badge">🔗 session</span>` : "";
+
   div.innerHTML = `
     <div class="meta">
       <span class="status ${episode.status}">${episode.status.replace("_", " ")}</span>
       &nbsp;${steps.length} step${steps.length === 1 ? "" : "s"}
       &nbsp;${path}
       &nbsp;reward: <b>${rewardText}</b>
+      &nbsp;${sessionBadge}
     </div>
     ${timeline}
     ${answerHtml}
@@ -382,8 +443,13 @@ function renderEpisodeCard(episode) {
       try {
         await consumeSse(`/confirm/${episode.id}/stream`, null, (name, data) => {
           if (name === "step") applyStepEvent(episode, data);
-          else if (name === "done") Object.assign(episode, data);
-          else if (name === "error") {
+          else if (name === "done") {
+            Object.assign(episode, data);
+            if (currentSessionId && data.session_id === currentSessionId) {
+              currentSessionTurns += 1;
+              renderSessionControl();
+            }
+          } else if (name === "error") {
             episode.status = "error";
             episode.error = data.detail;
           }
@@ -519,10 +585,15 @@ chatForm.addEventListener("submit", async (e) => {
   chatLog.scrollTop = chatLog.scrollHeight;
 
   try {
-    await consumeSse("/chat/stream", { message }, (name, data) => {
+    await consumeSse("/chat/stream", { message, session_id: currentSessionId }, (name, data) => {
       if (name === "step") applyStepEvent(local, data);
-      else if (name === "done") Object.assign(local, data);
-      else if (name === "error") {
+      else if (name === "done") {
+        Object.assign(local, data);
+        if (currentSessionId && data.session_id === currentSessionId) {
+          currentSessionTurns += 1;
+          renderSessionControl();
+        }
+      } else if (name === "error") {
         local.status = "error";
         local.error = data.detail;
       }

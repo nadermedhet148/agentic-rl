@@ -15,6 +15,8 @@ def make_episode(
     outcome_ok: bool | None = True,
     correction: str | None = None,
     explicit_score: int | None = None,
+    session_id: str | None = None,
+    answer: str | None = None,
 ) -> Episode:
     candidate = Candidate(capability=capability, params={"method": "GET", "url": "https://x"}, confidence=0.8)
     action = Action(candidate=candidate, index=0, explored=False, arm_id=f"{capability}:abc:False")
@@ -26,6 +28,8 @@ def make_episode(
         implicit_reward=0.2 if outcome_ok else -0.5,
         correction=correction,
         explicit_score=explicit_score,
+        session_id=session_id,
+        answer=answer,
         planner_id="mock",
         policy_id="linucb",
     )
@@ -136,6 +140,30 @@ def test_list_episodes_respects_limit(store):
         store.save(make_episode())
     assert len(store.list_episodes(limit=2)) == 2
     assert len(store.list_episodes(limit=10)) == 5
+
+
+def test_list_session_episodes_filters_and_orders_oldest_first(store):
+    import time
+
+    store.save(make_episode(request="a", session_id="s1", answer="A"))
+    time.sleep(0.001)
+    store.save(make_episode(request="b", session_id="s2", answer="B"))
+    time.sleep(0.001)
+    store.save(make_episode(request="c", session_id="s1", answer="C"))
+
+    session1 = store.list_session_episodes("s1")
+    assert [e.state.request for e in session1] == ["a", "c"]
+
+    assert store.list_session_episodes("s2") == store.list_session_episodes("s2", limit=50)
+    assert [e.state.request for e in store.list_session_episodes("s2")] == ["b"]
+
+    assert store.list_session_episodes("does-not-exist") == []
+
+
+def test_list_session_episodes_excludes_episodes_without_a_session(store):
+    store.save(make_episode(request="no session"))
+    store.save(make_episode(request="has session", session_id="s1"))
+    assert [e.state.request for e in store.list_session_episodes("s1")] == ["has session"]
 
 
 def test_save_is_upsert(store):
@@ -296,6 +324,10 @@ def test_fts_rebuilds_hosts_column_from_pre_existing_episodes(tmp_path):
     try:
         cols = {row["name"] for row in reopened.connection.execute("PRAGMA table_info(episodes_fts)").fetchall()}
         assert "hosts" in cols
+
+        # ... and the (unrelated) missing session_id column on episodes itself
+        episode_cols = {row["name"] for row in reopened.connection.execute("PRAGMA table_info(episodes)").fetchall()}
+        assert "session_id" in episode_cols
 
         results = reopened.search_corrections("fetch users from https://api.example.com/users")
         assert any("Content-Type" in r for r in results)

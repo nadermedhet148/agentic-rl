@@ -31,7 +31,13 @@ complete reply to show the user. Never invent capabilities that weren't listed.
 
 You will sometimes be shown corrections from past interactions where a previous \
 candidate was wrong. Treat these as binding instructions for this user: do not repeat \
-a corrected mistake."""
+a corrected mistake.
+
+You will sometimes be shown the conversation so far in this session (a summary of \
+earlier turns and/or the most recent ones verbatim). The user may refer back to \
+something from an earlier turn without repeating it (e.g. "now make that a PDF") — \
+use that section to resolve what "that" means before asking the user to repeat \
+themselves."""
 
 
 def render_history(steps: list[Step], max_chars: int, steps_remaining: int | None = None) -> str:
@@ -60,6 +66,25 @@ def render_history(steps: list[Step], max_chars: int, steps_remaining: int | Non
     if steps_remaining == 1:
         lines.append("\nThis is the last allowed step: you must propose `answer`.")
     return "\n".join(lines)
+
+
+def render_conversation(summary: str, recent_turns: list[tuple[str, str]], max_chars: int) -> str:
+    """The active session's conversation so far (core/session.py:Session), rendered
+    so the planner can resolve a reference to an earlier turn (e.g. "make that a
+    PDF"). `summary` covers turns already folded in (see llm/summarizer.py);
+    `recent_turns` are (request, answer) pairs for turns not yet summarized, oldest
+    first — empty/"" when no session is active. Rendered before render_history():
+    this is broader, cross-episode context, this episode's own step progress is
+    narrower and more specific.
+    """
+    if not summary and not recent_turns:
+        return ""
+    parts = ["\n\nConversation so far in this session:"]
+    if summary:
+        parts.append(f"Summary of earlier turns: {summary}")
+    for request, answer in recent_turns:
+        parts.append(f"User: {request[:max_chars]}\nAgent: {answer[:max_chars]}")
+    return "\n".join(parts)
 
 
 def render_corrections(prior_corrections: list[str]) -> str:
@@ -107,3 +132,22 @@ def render_existing_rules(existing: list[tuple[str, str]]) -> str:
         return "\n\nExisting rules: none yet."
     bullets = "\n".join(f"- [{rule_id}] {text}" for rule_id, text in existing)
     return f"\n\nExisting rules:\n{bullets}"
+
+
+SUMMARIZER_SYSTEM_PROMPT = """\
+You maintain a running summary of an ongoing conversation between a user and an \
+agent that searches the web, calls APIs, runs code, schedules tasks, and generates \
+reports on the user's behalf.
+
+Given the prior summary (if any) and the next batch of turns (request/answer pairs), \
+produce an updated, concise summary of the whole conversation so far. Preserve \
+concrete facts, decisions, and artifacts the user might refer back to later — \
+filenames, URLs, numbers, what was generated or scheduled — not a vague gist. Drop \
+conversational filler. Keep it under roughly 200 words; if it's already near that \
+length, prioritize the most recent and most concrete details over older, vaguer ones."""
+
+
+def render_turns_for_summary(turns: list[tuple[str, str]]) -> str:
+    """`turns` are (request, answer) pairs, oldest first — the summarizer's own
+    rendering of what to fold into the running summary (see llm/summarizer.py)."""
+    return "\n".join(f"- User: {request}\n  Agent: {answer}" for request, answer in turns)

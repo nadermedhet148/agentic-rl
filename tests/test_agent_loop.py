@@ -11,9 +11,11 @@ from agentic_rl.core.agent import Agent
 from agentic_rl.core.config import Mode, Settings
 from agentic_rl.core.memory import Consolidator, MemoryStore
 from agentic_rl.core.models import Candidate, Feedback
+from agentic_rl.core.session import SessionStore
 from agentic_rl.core.store import EpisodeStore
 from agentic_rl.llm.distiller import MockDistiller
 from agentic_rl.llm.mock import MockPlanner
+from agentic_rl.llm.summarizer import MockSummarizer
 from agentic_rl.policy.greedy import GreedyPolicy
 
 
@@ -36,6 +38,8 @@ def make_agent(
     default_fn=None,
     store: EpisodeStore | None = None,
     max_steps: int = 6,
+    session_summarize_every: int = 5,
+    summarizer=None,
 ):
     registry = CapabilityRegistry()
     registry.register(HttpCallCapability(httpx.AsyncClient()))
@@ -43,10 +47,14 @@ def make_agent(
     planner = MockPlanner(rules=rules or [], default=default or [], default_fn=default_fn)
     policy = GreedyPolicy()
     store = store or EpisodeStore(":memory:")
-    settings = Settings(mode=mode, max_steps=max_steps)
+    settings = Settings(mode=mode, max_steps=max_steps, session_summarize_every=session_summarize_every)
     memory = MemoryStore(store.connection)
     consolidator = Consolidator(memory, MockDistiller())
-    return Agent(planner, policy, registry, store, settings, memory, consolidator), store
+    sessions = SessionStore(store.connection)
+    agent = Agent(
+        planner, policy, registry, store, settings, memory, consolidator, sessions, summarizer or MockSummarizer()
+    )
+    return agent, store
 
 
 # --- read-tier auto-execute ----------------------------------------------------
@@ -214,9 +222,20 @@ async def test_correction_produces_a_rule_visible_on_the_next_run():
             super().__init__(default=candidates)
             self.seen_rules: list[list[str]] = []
 
-        async def plan(self, state, tool_schemas, prior_corrections, rules=None, history=None):
+        async def plan(
+            self,
+            state,
+            tool_schemas,
+            prior_corrections,
+            rules=None,
+            history=None,
+            conversation_summary="",
+            conversation_turns=None,
+        ):
             self.seen_rules.append(list(rules or []))
-            return await super().plan(state, tool_schemas, prior_corrections, rules, history)
+            return await super().plan(
+                state, tool_schemas, prior_corrections, rules, history, conversation_summary, conversation_turns
+            )
 
     recording_planner = RecordingPlanner()
     agent._planner = recording_planner  # swap in a spy without rebuilding the whole fixture
@@ -397,7 +416,8 @@ async def test_feedback_updates_every_step_arm():
     settings = Settings(mode=Mode.DEV)
     memory = MemoryStore(store.connection)
     consolidator = Consolidator(memory, MockDistiller())
-    agent = Agent(planner, policy, registry, store, settings, memory, consolidator)
+    sessions = SessionStore(store.connection)
+    agent = Agent(planner, policy, registry, store, settings, memory, consolidator, sessions, MockSummarizer())
 
     episode = await agent.run("fetch x")
     assert len(episode.steps) == 2
@@ -408,3 +428,132 @@ async def test_feedback_updates_every_step_arm():
     expected = {episode.steps[0].action.arm_id, episode.steps[1].action.arm_id}
     assert set(updated_arms) == expected
     assert len(updated_arms) == 2
+
+
+# --- conversation sessions --------------------------------------------------
+
+
+class FakeSummarizer:
+    id = "fake"
+
+    def __init__(self):
+        self.calls: list[tuple[str, list[tuple[str, str]]]] = []
+
+    async def summarize(self, prior_summary, turns):
+        self.calls.append((prior_summary, list(turns)))
+        return f"summary after {len(self.calls)} calls"
+
+
+class FailingSummarizer:
+    id = "failing"
+
+    async def summarize(self, prior_summary, turns):
+        raise RuntimeError("boom")
+
+
+def _one_step_answer_fn(state, history):
+    return [Candidate(capability="answer", params={"text": f"answer to: {state.request}"})]
+
+
+@pytest.mark.asyncio
+async def test_session_conversation_context_is_injected_on_the_next_turn():
+    agent, store = make_agent(default_fn=_one_step_answer_fn)
+    sessions = SessionStore(store.connection)
+    session = sessions.start()
+
+    class RecordingPlanner(MockPlanner):
+        def __init__(self):
+            super().__init__(default_fn=_one_step_answer_fn)
+            self.seen: list[tuple[str, list[tuple[str, str]]]] = []
+
+        async def plan(
+            self,
+            state,
+            tool_schemas,
+            prior_corrections,
+            rules=None,
+            history=None,
+            conversation_summary="",
+            conversation_turns=None,
+        ):
+            self.seen.append((conversation_summary, list(conversation_turns or [])))
+            return await super().plan(
+                state, tool_schemas, prior_corrections, rules, history, conversation_summary, conversation_turns
+            )
+
+    recording = RecordingPlanner()
+    agent._planner = recording  # swap in a spy without rebuilding the whole fixture
+
+    first = await agent.run("what is langfuse?", session_id=session.id)
+    assert first.answer == "answer to: what is langfuse?"
+    assert first.session_id == session.id
+    assert recording.seen[0] == ("", [])
+
+    second = await agent.run("now make that a PDF", session_id=session.id)
+    assert second.session_id == session.id
+    assert recording.seen[-1] == ("", [("what is langfuse?", "answer to: what is langfuse?")])
+
+
+@pytest.mark.asyncio
+async def test_session_summarizes_after_n_turns():
+    fake_summarizer = FakeSummarizer()
+    agent, store = make_agent(default_fn=_one_step_answer_fn, session_summarize_every=3, summarizer=fake_summarizer)
+    sessions = SessionStore(store.connection)
+    session = sessions.start()
+
+    for i in range(3):
+        await agent.run(f"turn {i}", session_id=session.id)
+
+    assert len(fake_summarizer.calls) == 1
+    prior_summary, turns = fake_summarizer.calls[0]
+    assert prior_summary == ""
+    assert turns == [
+        ("turn 0", "answer to: turn 0"),
+        ("turn 1", "answer to: turn 1"),
+        ("turn 2", "answer to: turn 2"),
+    ]
+
+    updated = sessions.get(session.id)
+    assert updated.turn_count == 3
+    assert updated.summarized_through == 3
+    assert updated.summary == "summary after 1 calls"
+
+    # a 4th turn shouldn't re-trigger until 3 more unsummarized turns accumulate
+    await agent.run("turn 3", session_id=session.id)
+    assert len(fake_summarizer.calls) == 1
+    assert sessions.get(session.id).turn_count == 4
+
+
+@pytest.mark.asyncio
+async def test_summarizer_failure_does_not_break_the_turn():
+    agent, store = make_agent(default_fn=_one_step_answer_fn, session_summarize_every=1, summarizer=FailingSummarizer())
+    sessions = SessionStore(store.connection)
+    session = sessions.start()
+
+    episode = await agent.run("turn 0", session_id=session.id)
+
+    assert episode.status == "executed"  # the user still gets their answer
+    updated = sessions.get(session.id)
+    assert updated.turn_count == 1
+    assert updated.summary == ""  # summarization failed, left untouched
+    assert updated.summarized_through == 0  # will retry with a bigger batch next time
+
+
+@pytest.mark.asyncio
+async def test_unknown_session_id_runs_session_less():
+    candidates = [Candidate(capability="answer", params={"text": "hi"})]
+    agent, _store = make_agent(default=candidates)
+    episode = await agent.run("hello", session_id="does-not-exist")
+    assert episode.session_id is None
+
+
+@pytest.mark.asyncio
+async def test_ended_session_runs_session_less():
+    candidates = [Candidate(capability="answer", params={"text": "hi"})]
+    agent, store = make_agent(default=candidates)
+    sessions = SessionStore(store.connection)
+    session = sessions.start()
+    sessions.end(session.id)
+
+    episode = await agent.run("hello", session_id=session.id)
+    assert episode.session_id is None

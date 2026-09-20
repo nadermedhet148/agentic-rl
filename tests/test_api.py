@@ -209,3 +209,54 @@ def test_confirm_stream_resumes_to_done():
     assert events[-1][0] == "done"
     done_episode = json.loads(events[-1][1])
     assert done_episode["status"] == "executed"
+
+
+# --- conversation sessions ------------------------------------------------
+
+
+def test_start_and_end_session():
+    with make_client() as client:
+        r = client.post("/sessions")
+        assert r.status_code == 200
+        session = r.json()
+        assert session["status"] == "active"
+        assert session["turn_count"] == 0
+
+        r2 = client.post(f"/sessions/{session['id']}/end")
+        assert r2.status_code == 200
+        assert r2.json()["status"] == "ended"
+
+
+def test_end_unknown_session_returns_404():
+    with make_client() as client:
+        r = client.post("/sessions/does-not-exist/end")
+    assert r.status_code == 404
+
+
+@respx.mock
+def test_chat_with_session_id_attaches_episode_to_session():
+    respx.get("https://example.com").mock(return_value=httpx.Response(200, json={"ok": True}))
+    with make_client() as client:
+        session = client.post("/sessions").json()
+        body = client.post(
+            "/chat", json={"message": "fetch https://example.com", "session_id": session["id"]}
+        ).json()
+    assert body["session_id"] == session["id"]
+
+
+def test_chat_with_unknown_session_id_runs_session_less():
+    with make_client() as client:
+        body = client.post("/chat", json={"message": "anything", "session_id": "does-not-exist"}).json()
+    assert body["session_id"] is None
+
+
+@respx.mock
+def test_chat_after_session_ended_runs_session_less():
+    respx.get("https://example.com").mock(return_value=httpx.Response(200, json={"ok": True}))
+    with make_client() as client:
+        session = client.post("/sessions").json()
+        client.post(f"/sessions/{session['id']}/end")
+        body = client.post(
+            "/chat", json={"message": "fetch https://example.com", "session_id": session["id"]}
+        ).json()
+    assert body["session_id"] is None

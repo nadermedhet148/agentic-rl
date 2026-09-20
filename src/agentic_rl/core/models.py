@@ -8,7 +8,18 @@ from pydantic import BaseModel, Field
 
 from agentic_rl.capabilities.base import Outcome, Tier
 
-__all__ = ["Action", "Candidate", "Episode", "Feedback", "Memory", "Outcome", "State", "Step", "Tier"]
+__all__ = [
+    "Action",
+    "Candidate",
+    "Episode",
+    "Feedback",
+    "Memory",
+    "Outcome",
+    "Session",
+    "State",
+    "Step",
+    "Tier",
+]
 
 
 def _now() -> datetime:
@@ -82,6 +93,7 @@ class Episode(BaseModel):
     state: State
     steps: list[Step] = Field(default_factory=list)
     answer: str | None = None  # set once the `answer` capability executes
+    session_id: str | None = None  # groups this episode into a conversation (core/session.py)
 
     status: Literal["pending_confirmation", "executed", "cancelled"] = "executed"
 
@@ -111,3 +123,20 @@ class Memory(BaseModel):
     source_episode_ids: list[str] = Field(default_factory=list)
     superseded_by: str | None = None
     active: bool = True
+
+
+class Session(BaseModel):
+    """A conversation grouping several episodes (see core/session.py:SessionStore).
+    Explicitly started/ended by the user (not an always-on notion) — while active,
+    its `summary` + the episodes since `summarized_through` are injected into every
+    plan (see llm/prompts.py render_conversation()) so later turns can refer back to
+    earlier ones (e.g. "now make that a PDF")."""
+
+    id: str = Field(default_factory=_new_id)
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+    status: Literal["active", "ended"] = "active"
+    turn_count: int = 0  # completed episodes attached to this session
+    summary: str = ""  # rolling summary of turns older than summarized_through
+    summarized_through: int = 0  # turn_count as of the last summarization

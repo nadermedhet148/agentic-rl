@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     run_code_docker_image: str = "python:3.12-slim"
     run_code_memory_mb: int = 256
     reports_dir: Path = Path("reports")
+    session_summarize_every: int = 5  # fold conversation turns into the rolling summary this often
 
     # Langfuse tracing (see docs/OBSERVABILITY.md) — off by default. Everything
     # else Langfuse needs (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL,

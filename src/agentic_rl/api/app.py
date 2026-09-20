@@ -21,10 +21,12 @@ from agentic_rl.core import observability
 from agentic_rl.core.agent import Agent
 from agentic_rl.core.config import Settings, get_settings
 from agentic_rl.core.memory import Consolidator, MemoryStore
+from agentic_rl.core.session import SessionStore
 from agentic_rl.core.store import EpisodeStore
 from agentic_rl.llm.base import Planner
 from agentic_rl.llm.distiller import Distiller, MockDistiller
 from agentic_rl.llm.mock import MockPlanner, heuristic_default_fn
+from agentic_rl.llm.summarizer import MockSummarizer, Summarizer
 from agentic_rl.policy.base import Policy
 from agentic_rl.policy.epsilon import EpsilonGreedyPolicy
 from agentic_rl.policy.greedy import GreedyPolicy
@@ -62,6 +64,14 @@ def _build_distiller(settings: Settings) -> Distiller:
     from agentic_rl.llm.distiller import LLMDistiller
 
     return LLMDistiller(provider=settings.planner, model=settings.llm_model)
+
+
+def _build_summarizer(settings: Settings) -> Summarizer:
+    if settings.planner == "mock":
+        return MockSummarizer()
+    from agentic_rl.llm.summarizer import LLMSummarizer
+
+    return LLMSummarizer(provider=settings.planner, model=settings.llm_model)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -125,8 +135,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     memory = MemoryStore(store.connection)
     consolidator = Consolidator(memory, _build_distiller(settings))
+    sessions = SessionStore(store.connection)
 
-    agent = Agent(planner, policy, registry, store, settings, memory, consolidator)
+    agent = Agent(
+        planner, policy, registry, store, settings, memory, consolidator, sessions, _build_summarizer(settings)
+    )
     agent_box["agent"] = agent
 
     @asynccontextmanager
@@ -149,6 +162,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.agent = agent
     app.state.registry = registry
     app.state.memory = memory
+    app.state.sessions = sessions
     app.state.background_tasks = set()  # keeps SSE worker tasks (api/routes.py) alive
 
     @app.get("/health")

@@ -13,9 +13,11 @@ from agentic_rl.core.agent import Agent
 from agentic_rl.core.config import Mode, Settings
 from agentic_rl.core.memory import Consolidator, MemoryStore
 from agentic_rl.core.models import Candidate, Feedback, State, Step
+from agentic_rl.core.session import SessionStore
 from agentic_rl.core.store import EpisodeStore
 from agentic_rl.llm.distiller import MockDistiller
 from agentic_rl.llm.mock import MockPlanner
+from agentic_rl.llm.summarizer import MockSummarizer
 from agentic_rl.policy.base import Policy
 from agentic_rl.policy.epsilon import EpsilonGreedyPolicy
 from agentic_rl.policy.greedy import GreedyPolicy
@@ -107,7 +109,8 @@ async def run_simulation(policy_id: str, episodes: int, seed: int = 0) -> tuple[
     settings = Settings(mode=Mode.SIM, planner="mock", policy=policy_id)
     memory = MemoryStore(store.connection)
     consolidator = Consolidator(memory, MockDistiller())
-    agent = Agent(planner, policy, registry, store, settings, memory, consolidator)
+    sessions = SessionStore(store.connection)
+    agent = Agent(planner, policy, registry, store, settings, memory, consolidator, sessions, MockSummarizer())
     user = ScriptedUser()
 
     rewards: list[float] = []

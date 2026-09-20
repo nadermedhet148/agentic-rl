@@ -57,7 +57,7 @@ see [OBSERVABILITY.md](OBSERVABILITY.md) for what gets traced and how to turn it
 
 ## Component diagram
 
-`Agent` is the hub — it owns no state itself beyond references to its five
+`Agent` is the hub — it owns no state itself beyond references to its
 collaborators, and every request passes through the same object.
 
 ```mermaid
@@ -101,12 +101,21 @@ graph TB
     Distiller --- LLMDistiller
     Distiller --- MockDistiller
 
+    Sessions["SessionStore<br/>(core/session.py)"]
+    Summarizer["Summarizer<br/>(llm/summarizer.py)"]
+    LLMSummarizer["LLMSummarizer<br/>(provider: claude|openai|google)"]
+    MockSummarizer["MockSummarizer"]
+    Summarizer --- LLMSummarizer
+    Summarizer --- MockSummarizer
+
     Agent --> Planner
     Agent --> Policy
     Agent --> Registry
     Agent --> Store
     Agent --> Memory
     Agent --> Consolidator
+    Agent --> Sessions
+    Agent --> Summarizer
     Consolidator --> Distiller
     Consolidator --> Memory
 
@@ -114,6 +123,7 @@ graph TB
     AgentScheduler -->|"fires: Agent.run(instruction, source='scheduler')"| Agent
 
     Store -.->|"shares sqlite3.Connection<br/>(EpisodeStore.connection)"| Memory
+    Store -.->|"shares sqlite3.Connection<br/>(EpisodeStore.connection)"| Sessions
 ```
 
 ### LLM calls — model-agnostic via PydanticAI
@@ -177,22 +187,23 @@ lives in one place, `llm/providers.py`:
   internally (e.g. `AnthropicModel` calls `client.beta.messages.create(...)`)
   and a hand-rolled fake can't track that reliably across SDK versions.
 
-**Why `Agent` depends on five collaborators instead of fewer:** each one is a
-separately swappable strategy — `Planner` and `Distiller` swap for `Mock*`
-implementations with no network in tests and the simulator; `Policy` swaps between
-three baselines to prove the RL policy actually beats "no learning"; `EpisodeStore`/
-`MemoryStore` are the two halves of memory (episodic vs. semantic — see
-[MEMORY-PLAN.md](MEMORY-PLAN.md)). None of them depend on `Agent`, so the dependency
-graph is a strict DAG and every collaborator is unit-testable alone.
+**Why `Agent` depends on this many collaborators instead of fewer:** each one is a
+separately swappable strategy — `Planner`, `Distiller`, and `Summarizer` all swap for
+`Mock*` implementations with no network in tests and the simulator; `Policy` swaps
+between three baselines to prove the RL policy actually beats "no learning";
+`EpisodeStore`/`MemoryStore`/`SessionStore` are the three halves of memory
+(episodic/semantic/conversation — see [MEMORY-PLAN.md](MEMORY-PLAN.md)). None of
+them depend on `Agent`, so the dependency graph is a strict DAG and every
+collaborator is unit-testable alone.
 
 ## Package layout
 
 ```mermaid
 graph LR
     subgraph src/agentic_rl
-        core["core/<br/>agent, models, store,<br/>memory, text, config"]
+        core["core/<br/>agent, models, store,<br/>memory, session, text, config"]
         capabilities["capabilities/<br/>base, registry,<br/>http_call, schedule_task,<br/>web_search, answer,<br/>run_code, generate_report"]
-        llm["llm/<br/>base, llm_planner, mock,<br/>distiller, prompts, providers"]
+        llm["llm/<br/>base, llm_planner, mock,<br/>distiller, summarizer,<br/>prompts, providers"]
         policy["policy/<br/>base, features,<br/>linucb, epsilon, greedy"]
         rl["rl/<br/>reward, export"]
         scheduler["scheduler/<br/>scheduler.py"]
@@ -225,7 +236,8 @@ substitution possible without touching `core`.
 ## Data model
 
 Everything lives in one SQLite file, opened once by `EpisodeStore` and shared (via
-`EpisodeStore.connection`) with `MemoryStore` and APScheduler's own job store.
+`EpisodeStore.connection`) with `MemoryStore`, `SessionStore`, and APScheduler's own
+job store.
 
 ```mermaid
 erDiagram
@@ -245,7 +257,17 @@ erDiagram
         text planner_id
         text policy_id
         text job_id "found by scanning steps for schedule_task"
+        text session_id FK "groups episodes into a conversation, nullable"
         text data "full Episode JSON: state, steps[], answer, ..."
+    }
+    sessions {
+        text id PK
+        text created_at
+        text updated_at
+        text status "active | ended"
+        int turn_count "completed episodes attached to this session"
+        text summary "rolling summary of turns older than summarized_through"
+        int summarized_through "turn_count as of the last summarization"
     }
     episode_steps {
         text episode_id PK, FK
@@ -292,6 +314,7 @@ erDiagram
     memories ||--o{ memories_fts : "indexed by"
     memories |o--o| memories : "superseded_by"
     episodes ||--o{ memories : "source_episode_ids (logical, not FK)"
+    sessions ||--o{ episodes : "groups (session_id)"
 ```
 
 `episodes_fts` and `memories_fts` are separate SQLite FTS5 virtual tables (not real
@@ -304,6 +327,14 @@ rationale, outcome payload) lives only in `episodes.data`'s `steps` array —
 `episode_steps` is a denormalized projection, rewritten wholesale (delete + insert)
 on every `EpisodeStore.save()`, same as the `episodes` row's own projected columns.
 
+`sessions` (see [MEMORY-PLAN.md](MEMORY-PLAN.md) "Session memory (v2)") groups
+episodes into an explicitly started/ended conversation — `episodes.session_id` is a
+plain nullable column (`NULL` for the common session-less case), not a hard foreign
+key constraint, consistent with how `job_id` already works. `EpisodeStore.
+list_session_episodes(session_id)` is the only session-specific query; everything
+else about a session (its rolling `summary`, `turn_count`) lives on the `sessions`
+row itself, updated by `core/agent.py:Agent._finish_episode`.
+
 ## Runtime composition (`api/app.py:create_app`)
 
 ```mermaid
@@ -312,18 +343,20 @@ graph TB
     create_app --> httpClient["httpx.AsyncClient()"]
     create_app --> store["EpisodeStore(db_path)"]
     store --> memory["MemoryStore(store.connection)"]
+    store --> sessions2["SessionStore(store.connection)"]
     create_app --> registry["CapabilityRegistry"]
     httpClient --> HttpCap2["HttpCallCapability"] --> registry
     create_app --> agentScheduler["AgentScheduler(db_path, scheduled_runner)"]
     agentScheduler --> SchedCap2["ScheduleTaskCapability"] --> registry
     create_app --> SearchCap2["WebSearchCapability(DdgsSearchPort())"] --> registry
-    create_app --> codeRunner["shutil.which('docker')?<br/>DockerCodeRunner : SubprocessCodeRunner"]
+    create_app --> codeRunner["docker_available()?<br/>DockerCodeRunner : SubprocessCodeRunner"]
     codeRunner --> RunCodeCap2["RunCodeCapability"] --> registry
     create_app --> ReportCap2["GenerateReportCapability(reports_dir)"] --> registry
     create_app --> planner2["_build_planner(settings)<br/>Mock | Claude"]
     create_app --> policy2["_build_policy(settings)<br/>LinUCB | Epsilon | Greedy"]
     store -->|"load_policy_state(policy.id)"| policy2
     create_app --> distiller2["_build_distiller(settings)<br/>Mock | Claude"]
+    create_app --> summarizer2["_build_summarizer(settings)<br/>Mock | Claude"]
     memory --> consolidator["Consolidator(memory, distiller)"]
     distiller2 --> consolidator
     planner2 --> agent2["Agent(...)<br/>registers AnswerCapability if absent"]
@@ -332,6 +365,8 @@ graph TB
     store --> agent2
     memory --> agent2
     consolidator --> agent2
+    sessions2 --> agent2
+    summarizer2 --> agent2
     agent2 -.->|"forward ref: agent_box['agent']"| agentScheduler
     agent2 --> FastAPI["FastAPI app<br/>routes + lifespan"]
     FastAPI --> bgTasks["app.state.background_tasks<br/>(SSE worker tasks — api/routes.py)"]

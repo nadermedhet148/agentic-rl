@@ -12,8 +12,10 @@ from agentic_rl.core import observability
 from agentic_rl.core.config import Mode, Settings
 from agentic_rl.core.memory import Consolidator, MemoryStore
 from agentic_rl.core.models import Action, Candidate, Episode, Feedback, State, Step
+from agentic_rl.core.session import SessionStore
 from agentic_rl.core.store import EpisodeStore
 from agentic_rl.llm.base import Planner
+from agentic_rl.llm.summarizer import Summarizer
 from agentic_rl.policy import features
 from agentic_rl.policy.base import Arm, Policy
 from agentic_rl.rl import reward as reward_mod
@@ -57,6 +59,8 @@ class Agent:
         settings: Settings,
         memory: MemoryStore,
         consolidator: Consolidator,
+        sessions: SessionStore,
+        summarizer: Summarizer,
     ):
         self._planner = planner
         self._policy = policy
@@ -65,6 +69,8 @@ class Agent:
         self._settings = settings
         self._memory = memory
         self._consolidator = consolidator
+        self._sessions = sessions
+        self._summarizer = summarizer
         if registry.get_or_none("answer") is None:
             registry.register(AnswerCapability())
 
@@ -74,6 +80,7 @@ class Agent:
         source: str = "user",
         episode_id: str | None = None,
         on_event: EventCallback | None = None,
+        session_id: str | None = None,
     ) -> Episode:
         with observability.span("agent.run", input=request, source=source, mode=self._settings.mode.value):
             if source == "user":
@@ -86,20 +93,36 @@ class Agent:
             )
             corrections = self._store.search_corrections(request, limit=self._settings.corrections_top_k)
             rules = [m.text for m in self._memory.active_rules()]
+            conversation_summary, conversation_turns, resolved_session_id = self._session_context(session_id)
 
             resolved_episode_id = episode_id or observability.get_current_trace_id()
             episode_kwargs: dict[str, Any] = {
                 "state": state,
                 "planner_id": self._planner.id,
                 "policy_id": self._policy.id,
+                "session_id": resolved_session_id,
             }
             if resolved_episode_id:
                 episode_kwargs["id"] = resolved_episode_id
             episode = Episode(**episode_kwargs)
 
-            await self._advance(episode, corrections, rules, on_event)
+            await self._advance(episode, corrections, rules, on_event, conversation_summary, conversation_turns)
             observability.update_current_span(output=_span_output(episode))
             return episode
+
+    def _session_context(self, session_id: str | None) -> tuple[str, list[tuple[str, str]], str | None]:
+        """Resolves an active session's conversation-so-far context. A stale/unknown/
+        ended session_id from the client is silently ignored — the episode just runs
+        session-less, same as if none was ever sent."""
+        if not session_id:
+            return "", [], None
+        session = self._sessions.get(session_id)
+        if session is None or session.status != "active":
+            return "", [], None
+        unsummarized = session.turn_count - session.summarized_through
+        recent = self._store.list_session_episodes(session_id)[-unsummarized:] if unsummarized > 0 else []
+        conversation_turns = [(e.state.request, e.answer or "") for e in recent]
+        return session.summary, conversation_turns, session_id
 
     async def confirm(self, episode_id: str, on_event: EventCallback | None = None) -> Episode:
         with observability.span("agent.confirm", input=episode_id, trace_id=episode_id):
@@ -117,7 +140,10 @@ class Agent:
                     episode.state.request, limit=self._settings.corrections_top_k
                 )
                 rules = [m.text for m in self._memory.active_rules()]
-                await self._advance(episode, corrections, rules, on_event)
+                conversation_summary, conversation_turns, _ = self._session_context(episode.session_id)
+                await self._advance(
+                    episode, corrections, rules, on_event, conversation_summary, conversation_turns
+                )
             observability.update_current_span(output=_span_output(episode))
             return episode
 
@@ -150,6 +176,8 @@ class Agent:
         corrections: list[str],
         rules: list[str],
         on_event: EventCallback | None,
+        conversation_summary: str = "",
+        conversation_turns: list[tuple[str, str]] | None = None,
     ) -> None:
         """Plan -> select -> (confirm gate) -> execute -> observe, looped until an
         `answer` step executes, the planner has nothing left to propose, or
@@ -158,7 +186,13 @@ class Agent:
         while len(episode.steps) < self._settings.max_steps:
             with observability.span("agent.step", input=episode.state.request, index=len(episode.steps)):
                 candidates = await self._planner.plan(
-                    episode.state, self._registry.tool_schemas(), corrections, rules, history=episode.steps
+                    episode.state,
+                    self._registry.tool_schemas(),
+                    corrections,
+                    rules,
+                    history=episode.steps,
+                    conversation_summary=conversation_summary,
+                    conversation_turns=conversation_turns,
                 )
                 if not candidates:
                     if episode.steps:
@@ -192,7 +226,7 @@ class Agent:
                     return
 
         episode.status = "executed"
-        self._store.save(episode)
+        await self._finish_episode(episode)
 
     async def _execute_step(
         self, episode: Episode, step: Step, arm: Arm, on_event: EventCallback | None
@@ -210,9 +244,36 @@ class Agent:
             payload = outcome.payload
             episode.answer = str(payload.get("text", "")) if isinstance(payload, dict) else ""
             episode.status = "executed"
-            self._store.save(episode)
+            await self._finish_episode(episode)
             return True
         return False
+
+    async def _finish_episode(self, episode: Episode) -> None:
+        """Saves a just-completed episode and, if it belongs to an active session,
+        bumps that session's turn_count and folds completed turns into the rolling
+        summary every settings.session_summarize_every turns (core/session.py)."""
+        self._store.save(episode)
+        if not episode.session_id:
+            return
+        session = self._sessions.get(episode.session_id)
+        if session is None or session.status != "active":
+            return
+
+        turn_count = session.turn_count + 1
+        unsummarized = turn_count - session.summarized_through
+        if unsummarized >= self._settings.session_summarize_every:
+            try:
+                turns = self._store.list_session_episodes(episode.session_id)[-unsummarized:]
+                pairs = [(e.state.request, e.answer or "") for e in turns]
+                new_summary = await self._summarizer.summarize(session.summary, pairs)
+            except Exception:  # noqa: BLE001 - the user already has their answer; never fail the response for this
+                self._sessions.update(episode.session_id, turn_count=turn_count)
+            else:
+                self._sessions.update(
+                    episode.session_id, turn_count=turn_count, summary=new_summary, summarized_through=turn_count
+                )
+        else:
+            self._sessions.update(episode.session_id, turn_count=turn_count)
 
     def _finalize_step(self, episode: Episode, step: Step, outcome: Outcome, arm: Arm) -> None:
         step.outcome = outcome

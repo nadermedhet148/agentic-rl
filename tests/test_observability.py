@@ -136,9 +136,11 @@ async def test_agent_run_unaffected_by_observability_when_disabled():
     from agentic_rl.core.config import Mode
     from agentic_rl.core.memory import Consolidator, MemoryStore
     from agentic_rl.core.models import Candidate
+    from agentic_rl.core.session import SessionStore
     from agentic_rl.core.store import EpisodeStore
     from agentic_rl.llm.distiller import MockDistiller
     from agentic_rl.llm.mock import MockPlanner
+    from agentic_rl.llm.summarizer import MockSummarizer
     from agentic_rl.policy.greedy import GreedyPolicy
 
     class FakeScheduler:
@@ -161,6 +163,8 @@ async def test_agent_run_unaffected_by_observability_when_disabled():
             Settings(mode=Mode.DEV),
             memory,
             Consolidator(memory, MockDistiller()),
+            SessionStore(store.connection),
+            MockSummarizer(),
         )
         episode = await agent.run("fetch x")
 
@@ -182,9 +186,11 @@ async def test_capability_execute_gets_its_own_span(monkeypatch):
     from agentic_rl.core.config import Mode
     from agentic_rl.core.memory import Consolidator, MemoryStore
     from agentic_rl.core.models import Candidate
+    from agentic_rl.core.session import SessionStore
     from agentic_rl.core.store import EpisodeStore
     from agentic_rl.llm.distiller import MockDistiller
     from agentic_rl.llm.mock import MockPlanner
+    from agentic_rl.llm.summarizer import MockSummarizer
     from agentic_rl.policy.greedy import GreedyPolicy
 
     span_names: list[str] = []
@@ -211,6 +217,8 @@ async def test_capability_execute_gets_its_own_span(monkeypatch):
             Settings(mode=Mode.DEV),
             memory,
             Consolidator(memory, MockDistiller()),
+            SessionStore(store.connection),
+            MockSummarizer(),
         )
         episode = await agent.run("fetch x")
 

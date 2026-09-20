@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from agentic_rl.core import observability
 from agentic_rl.core.agent import Agent, EventCallback
 from agentic_rl.core.memory import MemoryStore
-from agentic_rl.core.models import Episode, Feedback, Memory
+from agentic_rl.core.models import Episode, Feedback, Memory, Session
+from agentic_rl.core.session import SessionStore
 from agentic_rl.core.store import EpisodeStore
 from agentic_rl.scheduler.scheduler import AgentScheduler
 
@@ -22,6 +23,7 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str | None = None
 
 
 class AddMemoryRequest(BaseModel):
@@ -45,11 +47,17 @@ def _memory(request: Request) -> MemoryStore:
     return request.app.state.memory
 
 
+def _sessions(request: Request) -> SessionStore:
+    return request.app.state.sessions
+
+
 @router.post("/chat", response_model=Episode)
 async def chat(body: ChatRequest, request: Request) -> Episode:
     episode_id = uuid4().hex
     with observability.trace("api.chat", input=body.message, trace_id=episode_id, session_id=episode_id):
-        return await _agent(request).run(body.message, source="user", episode_id=episode_id)
+        return await _agent(request).run(
+            body.message, source="user", episode_id=episode_id, session_id=body.session_id
+        )
 
 
 def _sse(event: str, data: BaseModel | dict) -> str:
@@ -95,7 +103,11 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
     async def run(on_event: EventCallback) -> Episode:
         with observability.trace("api.chat", input=body.message, trace_id=episode_id, session_id=episode_id):
             return await _agent(request).run(
-                body.message, source="user", episode_id=episode_id, on_event=on_event
+                body.message,
+                source="user",
+                episode_id=episode_id,
+                on_event=on_event,
+                session_id=body.session_id,
             )
 
     return _stream(request, run)
@@ -182,3 +194,16 @@ def delete_memory(memory_id: str, request: Request) -> dict:
     if result is None:
         raise HTTPException(status_code=404, detail=f"unknown memory: {memory_id}")
     return {"status": "deactivated", "id": memory_id}
+
+
+@router.post("/sessions", response_model=Session)
+def start_session(request: Request) -> Session:
+    return _sessions(request).start()
+
+
+@router.post("/sessions/{session_id}/end", response_model=Session)
+def end_session(session_id: str, request: Request) -> Session:
+    result = _sessions(request).end(session_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"unknown session: {session_id}")
+    return result

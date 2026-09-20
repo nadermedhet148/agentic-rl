@@ -44,6 +44,8 @@ class MockPlanner(Planner):
         prior_corrections: list[str],
         rules: list[str] | None = None,
         history: list[Step] | None = None,
+        conversation_summary: str = "",
+        conversation_turns: list[tuple[str, str]] | None = None,
     ) -> list[Candidate]:
         history = history or []
         if history:

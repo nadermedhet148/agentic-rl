@@ -12,7 +12,7 @@ from agentic_rl.core import observability
 from agentic_rl.core.models import Action, Candidate, Outcome, State, Step
 from agentic_rl.llm.llm_planner import LLMPlanner
 from agentic_rl.llm.mock import MockPlanner, heuristic_default_fn
-from agentic_rl.llm.prompts import render_corrections, render_history, render_rules
+from agentic_rl.llm.prompts import render_conversation, render_corrections, render_history, render_rules
 
 # --- MockPlanner -------------------------------------------------------------
 
@@ -200,6 +200,28 @@ def test_render_history_reminds_on_last_allowed_step():
     assert "last allowed step" in rendered
 
 
+def test_render_conversation_empty():
+    assert render_conversation("", [], max_chars=4000) == ""
+
+
+def test_render_conversation_summary_only():
+    rendered = render_conversation("earlier we discussed langfuse", [], max_chars=4000)
+    assert "Conversation so far in this session" in rendered
+    assert "earlier we discussed langfuse" in rendered
+
+
+def test_render_conversation_renders_recent_turns():
+    rendered = render_conversation("", [("what is langfuse?", "an observability platform")], max_chars=4000)
+    assert "User: what is langfuse?" in rendered
+    assert "Agent: an observability platform" in rendered
+
+
+def test_render_conversation_truncates_turns():
+    rendered = render_conversation("", [("x" * 100, "y" * 100)], max_chars=10)
+    assert "x" * 100 not in rendered
+    assert "x" * 10 in rendered
+
+
 # --- LLMPlanner (PydanticAI Agent + provider Model) ---------------------------
 #
 # These default to the claude provider/model, but exercise the provider-agnostic
@@ -304,6 +326,40 @@ async def test_claude_planner_renders_history_between_request_and_rules():
     assert "step 1: http_call(" in user_content
     assert user_content.index("Request (") < user_content.index("Steps completed so far")
     assert user_content.index("Steps completed so far") < user_content.index("Standing rules")
+
+
+@pytest.mark.asyncio
+async def test_claude_planner_renders_conversation_between_request_and_history():
+    captured: dict[str, list[ModelMessage]] = {}
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured["messages"] = messages
+        return ModelResponse(parts=[TextPart(content=_plan_response_json([]))])
+
+    planner = LLMPlanner(pydantic_model=FunctionModel(capture))
+    candidate = Candidate(capability="http_call", params={"method": "GET", "url": "https://x"})
+    step = Step(
+        index=0,
+        candidates=[candidate],
+        action=Action(candidate=candidate, index=0, explored=False, arm_id="a"),
+        outcome=Outcome(ok=True, status="200"),
+    )
+
+    await planner.plan(
+        State(request="now make that a PDF"),
+        [],
+        prior_corrections=[],
+        history=[step],
+        conversation_summary="earlier the user asked about langfuse",
+        conversation_turns=[("what is langfuse?", "an observability platform")],
+    )
+
+    user_content = captured["messages"][0].parts[0].content
+    assert "Conversation so far in this session" in user_content
+    assert "earlier the user asked about langfuse" in user_content
+    assert "what is langfuse?" in user_content
+    assert user_content.index("Request (") < user_content.index("Conversation so far")
+    assert user_content.index("Conversation so far") < user_content.index("Steps completed so far")
 
 
 @pytest.mark.asyncio

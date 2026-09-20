@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     planner_id TEXT NOT NULL,
     policy_id TEXT NOT NULL,
     job_id TEXT,
+    session_id TEXT,
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_episodes_arm ON episodes(arm_id);
@@ -70,6 +71,21 @@ class EpisodeStore:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         self._ensure_fts_schema()
+        self._ensure_session_id_column()
+
+    def _ensure_session_id_column(self) -> None:
+        """Dev-project migration: episodes created before session support (see
+        core/session.py) lack the session_id column — SQLite supports adding a
+        column in place, no rebuild needed (unlike the FTS5 virtual table below).
+        The index is created here too (not in _SCHEMA) since `CREATE INDEX ... ON
+        episodes(session_id)` would fail outright against a pre-existing table that
+        doesn't have the column yet — this runs after the column is guaranteed to
+        exist, for both fresh and migrated databases."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(episodes)").fetchall()}
+        if "session_id" not in columns:
+            self._conn.execute("ALTER TABLE episodes ADD COLUMN session_id TEXT")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_session_id ON episodes(session_id)")
+        self._conn.commit()
 
     def _ensure_fts_schema(self) -> None:
         """Dev-project migration: if episodes_fts predates the `hosts` column, drop
@@ -117,8 +133,8 @@ class EpisodeStore:
             """INSERT OR REPLACE INTO episodes
                (id, created_at, request, source, capability, arm_id, status, outcome_ok,
                 implicit_reward, explicit_score, correction, final_reward, planner_id,
-                policy_id, job_id, data)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                policy_id, job_id, session_id, data)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 episode.id,
                 episode.created_at.isoformat(),
@@ -135,6 +151,7 @@ class EpisodeStore:
                 episode.planner_id,
                 episode.policy_id,
                 job_id,
+                episode.session_id,
                 episode.model_dump_json(),
             ),
         )
@@ -283,5 +300,14 @@ class EpisodeStore:
     def list_episodes(self, limit: int = 50) -> list[Episode]:
         rows = self._conn.execute(
             "SELECT data FROM episodes ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [Episode.model_validate_json(row["data"]) for row in rows]
+
+    def list_session_episodes(self, session_id: str, limit: int = 50) -> list[Episode]:
+        """Episodes attached to `session_id`, oldest first — used to pull the turns
+        not yet folded into a session's rolling summary (core/agent.py:_finish_episode)."""
+        rows = self._conn.execute(
+            "SELECT data FROM episodes WHERE session_id = ? ORDER BY created_at ASC LIMIT ?",
+            (session_id, limit),
         ).fetchall()
         return [Episode.model_validate_json(row["data"]) for row in rows]

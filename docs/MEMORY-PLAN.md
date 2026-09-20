@@ -10,7 +10,7 @@ v1 ([PLAN.md](PLAN.md)) has three kinds of memory, each with a gap:
 | **Semantic** (what the user wants) | nothing — corrections are raw strings on episodes | No consolidation (5 identical corrections = 5 prompt bullets), no contradiction handling, no way to state a preference without first making a mistake. |
 | **Episodic** (what happened) | `episodes` + FTS5 `OR` of every token | `"fetch orders"` matches anything containing `fetch`; a correction about `api.example.com/orders` never surfaces for a differently-worded request to the same host. |
 
-Scope agreed with the user: **persist policy state**, **semantic rules with LLM distillation + consolidation**, **better lexical retrieval** (no embeddings, no new external dependency beyond the Claude call already in use). Conversation sessions and user-stated facts are out of scope for this pass.
+Scope agreed with the user: **persist policy state**, **semantic rules with LLM distillation + consolidation**, **better lexical retrieval** (no embeddings, no new external dependency beyond the Claude call already in use). Conversation sessions were out of scope for *this* pass — see "Session memory (v2)" below for the follow-up that added them. User-stated facts distinct from a conversation's own content (e.g. "I prefer metric units") remain out of scope.
 
 ## Design
 
@@ -134,3 +134,44 @@ class Distiller(ABC):
 - `.venv/Scripts/python -m agentic_rl.sim.run --policy linucb --episodes 300` — reward curve unchanged (still climbs to +1.00); print `len(memory.active_rules())` at the end and confirm it's 3 (one rule per scripted preference, each with a high `support_count`), not hundreds.
 - Restart check: run the server with a file DB, chat + give 👍/👎 a few times, stop, start, `GET /metrics` history is intact **and** `policy_state` row exists (`sqlite3 agentic_rl.db "select policy_id, length(state) from policy_state"`).
 - Manual (with `ANTHROPIC_API_KEY`): chat `"POST to https://httpbin.org/post with {a:1}"` → confirm → ✏️ "always include Content-Type: application/json" → `GET /memories` shows one generalized rule → next chat `"POST {b:2} to https://httpbin.org/anything"` proposes the header. Give the same correction again → still one rule, `support_count` 2.
+
+## Session memory (v2)
+
+The gap this closes: every `/chat` call started a brand-new, independent `Episode`
+with no awareness of prior messages — asking for "a report about Langfuse" then, in
+a separate message, "I want that as a PDF" failed, because nothing carried the word
+"Langfuse" into the second episode's prompt. Unlike the semantic-rules tier above
+(which captures *corrections* — standing behavioral preferences), this is about a
+*conversation's own content* — a fourth kind of memory, deliberately kept separate:
+
+| Tier | What it captures | Lifetime |
+|---|---|---|
+| Procedural / Semantic / Episodic | see table above | permanent, cross-conversation |
+| **Conversation** (new) | this conversation's own turns — what was asked, what was answered, what was generated | scoped to one explicitly started/ended `Session`, not permanent |
+
+**Explicit, not always-on** — the user chose a Start/End session control (UI:
+`index.html`'s session panel above the chat log) over an always-on notion, so a
+one-off question doesn't carry irrelevant context into an unrelated later one.
+
+**Design** — `core/session.py:SessionStore` (`sessions` table: `status`,
+`turn_count`, `summary`, `summarized_through`), same shared-connection pattern as
+`MemoryStore`. `Episode` gained `session_id`. While a session is active,
+`core/agent.py:Agent._session_context` builds `(summary, recent_turns)` from the
+turns not yet folded into the summary (`EpisodeStore.list_session_episodes`) and
+threads it through every `Planner.plan()` call as `conversation_summary`/
+`conversation_turns`, rendered by `llm/prompts.py:render_conversation()` — same
+shape as `render_rules`/`render_corrections`, new domain.
+
+**Summarization, not unbounded growth** — every `settings.session_summarize_every`
+turns (default 5), `Agent._finish_episode` folds the not-yet-summarized turns into
+a rolling summary via a new `Summarizer` (`llm/summarizer.py:LLMSummarizer`/
+`MockSummarizer` — same `Distiller`-shaped ABC, own system prompt instructing it to
+preserve concrete facts/artifacts, not vague gist, since that's exactly what a
+"make that a PDF" follow-up needs). A summarizer failure never fails the user's
+response — see the `except Exception` in `_finish_episode`, tested in
+`tests/test_agent_loop.py:test_summarizer_failure_does_not_break_the_turn`.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the component/data-model diagrams and
+[CAPABILITIES.md](CAPABILITIES.md)/[REINFORCEMENT-LEARNING.md](REINFORCEMENT-LEARNING.md)
+for how this composes with everything else — a session changes what the planner
+sees, not how a step executes or how the bandit learns.

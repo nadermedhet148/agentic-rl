@@ -19,6 +19,8 @@ class Planner(ABC):
         prior_corrections: list[str],
         rules: list[str] | None = None,
         history: list[Step] | None = None,
+        conversation_summary: str = "",
+        conversation_turns: list[tuple[str, str]] | None = None,
     ) -> list[Candidate]:
         """Return one or more candidate actions, most-likely-correct first.
 
@@ -37,5 +39,11 @@ class Planner(ABC):
         should build on those steps' outcomes (e.g. use a prior payload as this step's
         params), never repeat a completed step, and propose the `answer` capability
         with the final user-facing text once nothing further is needed.
+
+        `conversation_summary`/`conversation_turns` are the active session's
+        conversation so far (core/session.py:Session), empty/"" when no session is
+        active — see llm/prompts.py render_conversation(). Distinct from `history`:
+        this spans separate episodes (separate user messages), `history` is only
+        this one episode's own steps.
         """
         ...

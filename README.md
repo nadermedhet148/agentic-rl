@@ -67,6 +67,14 @@ gets distilled into a standing rule (`core/memory.py`) that's shown to the
 planner on every future request, so a fix applies immediately — before the
 bandit has even had time to converge.
 
+By default each message is its own independent episode with no memory of
+earlier ones. Click **Start session** in the UI (or `POST /sessions`) to
+change that: while a session is active, the planner sees the conversation so
+far — so "now make that a PDF" can refer back to what you just asked about —
+and it's kept from growing unbounded by summarizing every 5 turns (see
+[docs/MEMORY-PLAN.md](docs/MEMORY-PLAN.md) "Session memory (v2)"). **End
+session** (or `POST /sessions/{id}/end`) goes back to session-less chat.
+
 ## Capabilities
 
 See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) for the full writeup
