@@ -22,16 +22,22 @@ any confirmation, and subsequent feedback into **one single Langfuse trace** in 
   │         input: the request text
   │         output: episode id, status, step count, capabilities per step, answer, reward
   │         ├─ agent.step              (one per step in the loop, index=0,1,2,...)
-  │         │    └─ {provider}.plan    (generation, only when planner != mock)
-  │         │         input: system prompt + rendered capabilities/request/history/rules/corrections
-  │         │         output: the candidates the model proposed for this step
-  │         │         usage_details: real input/output token counts
+  │         │    ├─ {provider}.plan    (generation, only when planner != mock)
+  │         │    │    input: system prompt + rendered capabilities/request/history/rules/corrections
+  │         │    │    output: the candidates the model proposed for this step
+  │         │    │    usage_details: real input/output token counts
+  │         │    └─ capability.execute (only if the step didn't pause for confirmation)
+  │         │         input: the chosen candidate's params
+  │         │         metadata: capability name
+  │         │         output: outcome.ok / status / error
   │         └─ agent.step              (repeats until an `answer` step or max_steps)
   │
   ├─ api.confirm                       (same trace_id = episode_id; /confirm and /confirm/.../stream)
   │    └─ agent.confirm
   │         input: episode id
   │         output: episode id, status, step count, capabilities per step, answer, reward
+  │         ├─ capability.execute      (the previously-pending step, executed directly —
+  │         │                           not inside its own agent.step, see below)
   │         └─ agent.step              (0+ more steps if the loop continues past the confirmed one)
   │
   └─ api.feedback                      (same trace_id = episode_id)
@@ -47,7 +53,8 @@ any confirmation, and subsequent feedback into **one single Langfuse trace** in 
        └─ agent.run
             input: scheduled instruction
             output: episode id, status, step count, capabilities per step, answer, reward
-            └─ agent.step              (one per step, each with a {provider}.plan generation)
+            └─ agent.step              (one per step, each with a {provider}.plan generation
+                                         and a capability.execute)
 ```
 
 **Why the LLM calls are traced by hand instead of auto-instrumented:** the
@@ -67,15 +74,25 @@ same `observability.generation()` call, so there's no reason to maintain a
 different tracing mechanism per provider. The two call sites (`llm/llm_planner.py`,
 `llm/distiller.py`) are wrapped by hand instead — see `core/observability.py`.
 
-**What's *not* separately traced (yet):** policy selection (`Policy.select`) and
-capability execution (`Capability.execute`) happen inside each `agent.step` span
-but don't get their own child span. Easy to add later —
-`observability.span("policy.select", ...)` / `observability.span("capability.execute", ...)`
-around the relevant lines in `core/agent.py` — left out for now to keep the
-trace tree simple until there's a concrete reason to want that granularity. Note
-that the one step `agent.confirm` itself executes (the previously-pending one)
-runs directly under `agent.confirm`, not inside its own `agent.step` span — only
-steps planned by `Agent._advance`'s loop get one.
+**Capability execution has its own span** — `core/agent.py:_execute()` wraps
+every `Capability.execute()` call in a `capability.execute` span (`input` is
+the candidate's params, `metadata.capability` is its name, `output` is the
+outcome's ok/status/error). This was added specifically so `run_code`
+(`capabilities/run_code.py`) has an audit trail of what code actually ran,
+its exit status, and whether it ran in the Docker sandbox or the weaker
+subprocess fallback (`outcome.payload["sandbox"]`) — worth checking here
+first if a `run_code` step behaves unexpectedly. It's the single call site
+used by both `Agent._advance`'s loop and `Agent.confirm`'s resumed step, so
+it's covered uniformly; note that the one step `agent.confirm` itself
+executes (the previously-pending one) runs directly under `agent.confirm`,
+not inside its own `agent.step` span — only steps planned by
+`Agent._advance`'s loop get one of those.
+
+**What's *not* separately traced (yet):** policy selection (`Policy.select`)
+happens inside `agent.step` but doesn't get its own child span — easy to add
+later (`observability.span("policy.select", ...)` around the relevant lines
+in `core/agent.py`) if there's ever a concrete reason to want that
+granularity.
 
 ## Setup
 

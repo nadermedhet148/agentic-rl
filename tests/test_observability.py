@@ -166,3 +166,56 @@ async def test_agent_run_unaffected_by_observability_when_disabled():
 
     assert episode.status == "executed"
     assert episode.steps[0].outcome.ok is True
+
+
+@pytest.mark.asyncio
+async def test_capability_execute_gets_its_own_span(monkeypatch):
+    # core/agent.py:_execute wraps every capability call in its own
+    # "capability.execute" span (docs/OBSERVABILITY.md) — verify it's actually
+    # emitted, not just that tracing stays transparent when disabled.
+    import httpx
+    import respx
+
+    from agentic_rl.capabilities.http_call import HttpCallCapability
+    from agentic_rl.capabilities.registry import CapabilityRegistry
+    from agentic_rl.core.agent import Agent
+    from agentic_rl.core.config import Mode
+    from agentic_rl.core.memory import Consolidator, MemoryStore
+    from agentic_rl.core.models import Candidate
+    from agentic_rl.core.store import EpisodeStore
+    from agentic_rl.llm.distiller import MockDistiller
+    from agentic_rl.llm.mock import MockPlanner
+    from agentic_rl.policy.greedy import GreedyPolicy
+
+    span_names: list[str] = []
+    real_span = observability.span
+
+    def recording_span(name, **kwargs):
+        span_names.append(name)
+        return real_span(name, **kwargs)
+
+    monkeypatch.setattr(observability, "span", recording_span)
+
+    with respx.mock:
+        respx.get("https://x").mock(return_value=httpx.Response(200, json={}))
+        registry = CapabilityRegistry()
+        registry.register(HttpCallCapability(httpx.AsyncClient()))
+        candidates = [Candidate(capability="http_call", params={"method": "GET", "url": "https://x"})]
+        store = EpisodeStore(":memory:")
+        memory = MemoryStore(store.connection)
+        agent = Agent(
+            MockPlanner(default=candidates),
+            GreedyPolicy(),
+            registry,
+            store,
+            Settings(mode=Mode.DEV),
+            memory,
+            Consolidator(memory, MockDistiller()),
+        )
+        episode = await agent.run("fetch x")
+
+    assert episode.status == "executed"
+    assert "agent.run" in span_names
+    assert "agent.step" in span_names
+    # one capability.execute per step: the http_call, then the heuristic answer
+    assert span_names.count("capability.execute") == len(episode.steps) == 2

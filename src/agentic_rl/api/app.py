@@ -11,8 +11,10 @@ from fastapi.staticfiles import StaticFiles
 
 from agentic_rl import __version__
 from agentic_rl.api.routes import router
+from agentic_rl.capabilities.generate_report import GenerateReportCapability
 from agentic_rl.capabilities.http_call import HttpCallCapability
 from agentic_rl.capabilities.registry import CapabilityRegistry
+from agentic_rl.capabilities.run_code import DockerCodeRunner, RunCodeCapability, SubprocessCodeRunner, docker_available
 from agentic_rl.capabilities.schedule_task import ScheduleTaskCapability
 from agentic_rl.capabilities.web_search import DdgsSearchPort, WebSearchCapability
 from agentic_rl.core import observability
@@ -100,6 +102,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             timeout_s=settings.web_search_timeout_s,
         )
     )
+    code_runner = (
+        DockerCodeRunner(settings.run_code_docker_image, settings.run_code_memory_mb)
+        if docker_available()
+        else SubprocessCodeRunner()
+    )
+    registry.register(
+        RunCodeCapability(
+            code_runner,
+            timeout_s=settings.run_code_timeout_s,
+            max_output_bytes=settings.run_code_max_output_bytes,
+        )
+    )
+    settings.reports_dir.mkdir(parents=True, exist_ok=True)
+    registry.register(GenerateReportCapability(settings.reports_dir))
 
     planner = _build_planner(settings)
     policy = _build_policy(settings)
@@ -140,6 +156,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok", "mode": settings.mode, "version": __version__}
 
     app.include_router(router)
+
+    # Registered before the catch-all "/" mount below — Starlette matches mounts in
+    # registration order and Mount("/") prefix-matches every path, so anything added
+    # after it would never be reached.
+    app.mount("/reports", StaticFiles(directory=str(settings.reports_dir)), name="reports")
 
     if STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

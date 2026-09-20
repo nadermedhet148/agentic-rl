@@ -3,7 +3,9 @@
 This document is the structural map of agentic-rl: what the pieces are, how they're
 packaged, and how they're wired together at runtime. For *how requests flow through
 the system step by step*, see [SEQUENCES.md](SEQUENCES.md). For the original design
-rationale, see [PLAN.md](PLAN.md) and [MEMORY-PLAN.md](MEMORY-PLAN.md).
+rationale, see [PLAN.md](PLAN.md) and [MEMORY-PLAN.md](MEMORY-PLAN.md). For how the
+bandit actually learns, see [REINFORCEMENT-LEARNING.md](REINFORCEMENT-LEARNING.md);
+for what each capability does, see [CAPABILITIES.md](CAPABILITIES.md).
 
 ## System overview
 
@@ -28,10 +30,12 @@ graph TB
         Claude["Claude API<br/>(via PydanticAI Agent + AnthropicModel)"]
         HTTP["Arbitrary HTTP endpoints<br/>(via http_call)"]
         DDG["DuckDuckGo<br/>(via web_search, ddgs)"]
+        Docker["Docker<br/>(run_code sandbox, if installed & running —<br/>else a plain subprocess)"]
         Langfuse["Langfuse<br/>(traces, optional)"]
     end
 
     DB[("SQLite file<br/>episodes · episodes_fts<br/>policy_state · memories · memories_fts<br/>apscheduler_jobs")]
+    Reports[("reports_dir<br/>generate_report's PDFs,<br/>served at /reports/*")]
 
     UI <-->|"REST + JSON"| API
     API --> Agent
@@ -42,6 +46,9 @@ graph TB
     Agent -.->|plan / distill| Claude
     Agent -.->|execute http_call| HTTP
     Agent -.->|execute web_search| DDG
+    Agent -.->|"execute run_code<br/>(--network none, --rm)"| Docker
+    Agent -->|execute generate_report| Reports
+    API -->|"GET /reports/*"| Reports
     Agent -.->|"spans + generations<br/>(off by default)"| Langfuse
 ```
 
@@ -76,10 +83,14 @@ graph TB
     SchedCap["ScheduleTaskCapability"]
     SearchCap["WebSearchCapability"]
     AnswerCap["AnswerCapability<br/>(terminal step — Agent auto-registers it)"]
+    RunCodeCap["RunCodeCapability<br/>(DockerCodeRunner | SubprocessCodeRunner)"]
+    ReportCap["GenerateReportCapability"]
     Registry --- HttpCap
     Registry --- SchedCap
     Registry --- SearchCap
     Registry --- AnswerCap
+    Registry --- RunCodeCap
+    Registry --- ReportCap
 
     Store["EpisodeStore<br/>(core/store.py)"]
     Memory["MemoryStore<br/>(core/memory.py)"]
@@ -180,7 +191,7 @@ graph is a strict DAG and every collaborator is unit-testable alone.
 graph LR
     subgraph src/agentic_rl
         core["core/<br/>agent, models, store,<br/>memory, text, config"]
-        capabilities["capabilities/<br/>base, registry,<br/>http_call, schedule_task,<br/>web_search, answer"]
+        capabilities["capabilities/<br/>base, registry,<br/>http_call, schedule_task,<br/>web_search, answer,<br/>run_code, generate_report"]
         llm["llm/<br/>base, llm_planner, mock,<br/>distiller, prompts, providers"]
         policy["policy/<br/>base, features,<br/>linucb, epsilon, greedy"]
         rl["rl/<br/>reward, export"]
@@ -306,6 +317,9 @@ graph TB
     create_app --> agentScheduler["AgentScheduler(db_path, scheduled_runner)"]
     agentScheduler --> SchedCap2["ScheduleTaskCapability"] --> registry
     create_app --> SearchCap2["WebSearchCapability(DdgsSearchPort())"] --> registry
+    create_app --> codeRunner["shutil.which('docker')?<br/>DockerCodeRunner : SubprocessCodeRunner"]
+    codeRunner --> RunCodeCap2["RunCodeCapability"] --> registry
+    create_app --> ReportCap2["GenerateReportCapability(reports_dir)"] --> registry
     create_app --> planner2["_build_planner(settings)<br/>Mock | Claude"]
     create_app --> policy2["_build_policy(settings)<br/>LinUCB | Epsilon | Greedy"]
     store -->|"load_policy_state(policy.id)"| policy2
@@ -321,6 +335,7 @@ graph TB
     agent2 -.->|"forward ref: agent_box['agent']"| agentScheduler
     agent2 --> FastAPI["FastAPI app<br/>routes + lifespan"]
     FastAPI --> bgTasks["app.state.background_tasks<br/>(SSE worker tasks — api/routes.py)"]
+    FastAPI --> reportsMount["Mount /reports → reports_dir<br/>(registered before the catch-all / mount)"]
 ```
 
 The scheduler/agent construction has a genuine circular dependency (the scheduler

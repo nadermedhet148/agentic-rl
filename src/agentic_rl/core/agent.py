@@ -261,9 +261,15 @@ class Agent:
         return candidate.needs_confirmation
 
     async def _execute(self, capability, candidate: Candidate) -> Outcome:
-        if capability is None:
-            return Outcome(ok=False, error=f"unknown capability: {candidate.capability!r}")
-        try:
-            return await capability.execute(candidate.params)
-        except Exception as exc:  # noqa: BLE001 - a capability bug must not crash the loop
-            return Outcome(ok=False, error=f"{type(exc).__name__}: {exc}")
+        with observability.span("capability.execute", input=candidate.params, capability=candidate.capability):
+            if capability is None:
+                outcome = Outcome(ok=False, error=f"unknown capability: {candidate.capability!r}")
+            else:
+                try:
+                    outcome = await capability.execute(candidate.params)
+                except Exception as exc:  # noqa: BLE001 - a capability bug must not crash the loop
+                    outcome = Outcome(ok=False, error=f"{type(exc).__name__}: {exc}")
+            observability.update_current_span(
+                output={"ok": outcome.ok, "status": outcome.status, "error": outcome.error}
+            )
+            return outcome

@@ -13,7 +13,10 @@ Decisions made with the user:
 - **Stack:** Python. FastAPI + SQLite + APScheduler + official `anthropic` SDK.
 - **LLM:** pluggable behind a `Planner` protocol; ship Claude (`claude-opus-5`), add Ollama later.
 - **Surface:** HTTP API + minimal static web UI (chat, feedback, tasks, episodes, reward curve).
-- **Capabilities in v1:** only `http_call` and `schedule_task`.
+- **Capabilities in v1:** `http_call` and `schedule_task`. Since extended with
+  `web_search`, the terminal `answer` capability, `run_code` (sandboxed Python),
+  and `generate_report` (PDF) — same `Capability` interface, no v1 assumptions
+  broken.
 
 Guiding constraints:
 - Exploration never touches side-effecting actions in production. It happens in the simulator
@@ -80,6 +83,10 @@ src/agentic_rl/
     registry.py      register/lookup; exports JSON schemas for the planner
     http_call.py     GET/POST/PUT/DELETE via httpx; tier = read for GET/HEAD else write
     schedule_task.py cron|run_at + instruction text → APScheduler job that calls Agent.run
+    web_search.py    DuckDuckGo search (ddgs); tier = read
+    answer.py        terminal step — the loop's own "I'm done, here's the reply" signal; tier = read
+    run_code.py      Python snippet in a Docker (or subprocess-fallback) sandbox; tier = write, always confirmed
+    generate_report.py  text -> PDF under reports_dir, served at /reports/<filename>; tier = write
   llm/
     base.py          Planner protocol: plan(request, state, tools_schema, prior_corrections) -> list[Candidate]
     claude.py        anthropic SDK, claude-opus-5, thinking adaptive, messages.parse() → Candidates

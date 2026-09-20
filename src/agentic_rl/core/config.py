@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     corrections_top_k: int = 5
     max_steps: int = 6  # cap on plan->act->observe iterations per episode (see core/agent.py)
     planner_history_max_chars: int = 4000  # per-step outcome payload truncation in the planner prompt
+    run_code_timeout_s: float = 10.0
+    run_code_max_output_bytes: int = 64_000
+    run_code_docker_image: str = "python:3.12-slim"
+    run_code_memory_mb: int = 256
+    reports_dir: Path = Path("reports")
 
     # Langfuse tracing (see docs/OBSERVABILITY.md) — off by default. Everything
     # else Langfuse needs (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL,

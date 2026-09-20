@@ -43,6 +43,7 @@ sequenceDiagram
         Agent->>Registry: get_or_none(candidate.capability)
         Registry-->>Agent: Capability
         alt tier == READ (or WRITE and not needs_confirmation)
+            Note over Agent,Cap: wrapped in a "capability.execute" span (docs/OBSERVABILITY.md)
             Agent->>Cap: execute(params)
             Cap-->>Agent: Outcome(ok, status, payload)
             Agent->>Agent: step.implicit_reward = reward.implicit_reward(...)<br/>episode.implicit_reward = mean(step rewards)
@@ -101,6 +102,7 @@ sequenceDiagram
     Store-->>Agent: Episode(status="pending_confirmation")
     Agent->>Agent: pending = episode.steps[-1]
     Agent->>Registry: get_or_none(pending.action.candidate.capability)
+    Note over Agent,Cap: wrapped in a "capability.execute" span, directly under<br/>agent.confirm (not inside its own agent.step)
     Agent->>Cap: execute(params)
     Cap-->>Agent: Outcome
     Agent->>Agent: pending.implicit_reward, episode.implicit_reward = mean(steps)
@@ -200,6 +202,7 @@ sequenceDiagram
     UI->>API: POST /chat/stream
     API->>Agent: run(request, "user", on_event)
     Note over Agent: step 0: plan → select (candidate.capability == "schedule_task")
+    Note over Agent,Cap: wrapped in a "capability.execute" span (docs/OBSERVABILITY.md)
     Agent->>Cap: execute({instruction, cron/run_at, timezone})
     Cap->>Sched: add_job(instruction, cron=..., timezone=...)
     Sched->>APS: scheduler.add_job(_run_scheduled_instruction, trigger, args=[instruction])

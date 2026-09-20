@@ -17,7 +17,12 @@ prior step and its outcome. Never propose a step identical to one already comple
 
 Set `needs_confirmation` to true for any action with side effects that would be costly \
 or awkward to undo (e.g. a POST/PUT/PATCH/DELETE http_call, or a recurring \
-schedule_task) unless the request very explicitly asked for exactly that action. Set \
+schedule_task) unless the request very explicitly asked for exactly that action. Always \
+set `needs_confirmation` to true for `run_code` — it executes real Python on the \
+server. Use `run_code` only for computation or data reshaping you can't do reliably \
+yourself (exact math, sorting, reformatting), never to fetch a URL (use http_call or \
+web_search for that instead). Use `generate_report` once you already have the content \
+to report on, to turn it into a PDF — not to gather that content. Set \
 `confidence` to your honest estimate (0-1) that this candidate is what the user wants.
 
 Once you have everything needed to respond — including when the request needs no \
