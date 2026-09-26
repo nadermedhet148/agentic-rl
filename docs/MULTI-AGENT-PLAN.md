@@ -22,8 +22,16 @@ statistics, text rules, and an episode log. "Agents learning from each other"
 therefore means **sharing those three stores in a controlled way**. It doesn't mean
 agents chatting to each other and hoping something sticks.
 
-### Assumptions (to confirm, see "Open questions")
+### Decisions made with the user
 
+- **One user for now.** All agents serve the same person, so a lesson confirmed by
+  two agents is safe to share team-wide. Per-user rule scoping is out of scope until
+  there's more than one user.
+- **Delegation ships in v1** (phase 5 below), not deferred.
+- **Distributed later, designed now.** Agents run in one process for now, but
+  phase 2 designs the `KnowledgeHub` around a sync interface that serializes
+  cleanly. That way, moving agents into separate processes later is a transport
+  change, not a redesign.
 - Agents are **specialists**, not clones. Each one has a role, a persona prompt and
   a *subset* of the capability registry, e.g. `researcher` (web_search, answer),
   `integrator` (http_call, schedule_task, answer) and `analyst` (run_code,
@@ -186,7 +194,7 @@ by owner trust), so one number per pair drives all sharing.
 
 ## Changes
 
-### 0. Plumbing, with no behavior change
+### 0. Plumbing, with no behavior change ✅ done
 
 - `core/models.py`: `AgentProfile(id, name, role, persona, capabilities: list[str],
   policy: str, share: bool)`. Add `agent_id` to `Episode` (default `"default"`),
@@ -200,6 +208,8 @@ by owner trust), so one number per pair drives all sharing.
 - `capabilities/registry.py`: `view(names) -> CapabilityRegistry`, a filtered view
   so each agent's `tool_schemas()` only lists its own capabilities.
 - `Agent.__init__` takes an `AgentProfile`, and `_persist_policy` writes under its id.
+- The `agents` and `agent_trust` tables are deferred to phases 1 and 4, where they're
+  first read.
 - **Acceptance:** the whole existing test suite passes unchanged with one implicit
   `default` agent.
 
@@ -297,17 +307,10 @@ Out of scope for now: cross-process/federated sync (the `evidence()` /
 `set_peer_evidence()` interface is the seam for it later), LLM-to-LLM debate or
 chat between agents, and per-agent fine-tuning.
 
-## Open questions
+## Resolved questions
 
-1. **Specialists or replicas?** Do the agents differ by role and capability (the
-   assumption above), or are they identical agents serving different users or
-   teams? This mostly changes the default trust prior and whether the Router is
-   needed.
-2. **One user or many?** If different agents serve different people, team-scoped
-   rules need a stricter promotion bar (or per-tenant scoping) so one person's
-   preference doesn't become everyone's.
-3. **Delegation in v1?** It's the most complex piece (child episodes, credit, the
-   confirm pass-through). It could be deferred until after sharing is proven.
-4. **Distributed later?** If agents will eventually run as separate
-   processes/services, a `KnowledgeHub` HTTP sync should be designed in phase 2
-   rather than retrofitted.
+1. **Specialists or replicas?** Specialists, as designed above.
+2. **One user or many?** One user for now.
+3. **Delegation in v1?** Yes.
+4. **Distributed later?** Yes, eventually. The hub's sync interface is designed in
+   phase 2 so it can later run over a network.

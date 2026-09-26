@@ -26,6 +26,15 @@ class CapabilityRegistry:
     def names(self) -> list[str]:
         return list(self._by_name)
 
+    def view(self, names: list[str]) -> CapabilityRegistry:
+        """A registry holding only `names`, sharing the same capability instances —
+        one agent's slice of the team's capabilities (core/models.py AgentProfile)."""
+        subset = CapabilityRegistry()
+        for name in names:
+            if name not in subset._by_name:
+                subset.register(self.get(name))
+        return subset
+
     def tool_schemas(self) -> list[dict]:
         """JSON-schema tool definitions for the planner, one per registered capability."""
         return [

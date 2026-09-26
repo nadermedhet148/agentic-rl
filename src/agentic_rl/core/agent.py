@@ -11,7 +11,7 @@ from agentic_rl.capabilities.registry import CapabilityRegistry
 from agentic_rl.core import observability
 from agentic_rl.core.config import Mode, Settings
 from agentic_rl.core.memory import Consolidator, MemoryStore
-from agentic_rl.core.models import Action, Candidate, Episode, Feedback, State, Step
+from agentic_rl.core.models import Action, AgentProfile, Candidate, Episode, Feedback, State, Step
 from agentic_rl.core.session import SessionStore
 from agentic_rl.core.store import EpisodeStore
 from agentic_rl.llm.base import Planner
@@ -61,7 +61,15 @@ class Agent:
         consolidator: Consolidator,
         sessions: SessionStore,
         summarizer: Summarizer,
+        profile: AgentProfile | None = None,
     ):
+        self._profile = profile or AgentProfile()
+        if registry.get_or_none("answer") is None:
+            registry.register(AnswerCapability())
+        if self._profile.capabilities is not None:
+            # this agent's slice of the team's capabilities; `answer` is always in it,
+            # since every agent must be able to finish an episode
+            registry = registry.view([*self._profile.capabilities, "answer"])
         self._planner = planner
         self._policy = policy
         self._registry = registry
@@ -71,8 +79,18 @@ class Agent:
         self._consolidator = consolidator
         self._sessions = sessions
         self._summarizer = summarizer
-        if registry.get_or_none("answer") is None:
-            registry.register(AnswerCapability())
+
+    @property
+    def id(self) -> str:
+        return self._profile.id
+
+    @property
+    def profile(self) -> AgentProfile:
+        return self._profile
+
+    @property
+    def policy(self) -> Policy:
+        return self._policy
 
     async def run(
         self,
@@ -92,7 +110,7 @@ class Agent:
                 prior_correction_count=self._store.correction_count(request),
             )
             corrections = self._store.search_corrections(request, limit=self._settings.corrections_top_k)
-            rules = [m.text for m in self._memory.active_rules()]
+            rules = [m.text for m in self._memory.active_rules(agent_id=self.id)]
             conversation_summary, conversation_turns, resolved_session_id = self._session_context(session_id)
 
             resolved_episode_id = episode_id or observability.get_current_trace_id()
@@ -101,6 +119,7 @@ class Agent:
                 "planner_id": self._planner.id,
                 "policy_id": self._policy.id,
                 "session_id": resolved_session_id,
+                "agent_id": self.id,
             }
             if resolved_episode_id:
                 episode_kwargs["id"] = resolved_episode_id
@@ -139,7 +158,7 @@ class Agent:
                 corrections = self._store.search_corrections(
                     episode.state.request, limit=self._settings.corrections_top_k
                 )
-                rules = [m.text for m in self._memory.active_rules()]
+                rules = [m.text for m in self._memory.active_rules(agent_id=self.id)]
                 conversation_summary, conversation_turns, _ = self._session_context(episode.session_id)
                 await self._advance(
                     episode, corrections, rules, on_event, conversation_summary, conversation_turns
@@ -289,7 +308,7 @@ class Agent:
         """Save the policy's learned state after every update — see policy/base.py
         state_dict()/load_state() and api/app.py where it's reloaded on boot. Cheap:
         one row, one update per episode."""
-        self._store.save_policy_state(self._policy.id, self._policy.state_dict())
+        self._store.save_policy_state(self._policy.id, self._policy.state_dict(), agent_id=self.id)
 
     def _arm_for(self, state: State, candidate: Candidate) -> Arm:
         return Arm(

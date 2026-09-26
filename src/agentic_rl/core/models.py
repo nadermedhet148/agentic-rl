@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 from agentic_rl.capabilities.base import Outcome, Tier
 
 __all__ = [
+    "DEFAULT_AGENT_ID",
     "Action",
+    "AgentProfile",
     "Candidate",
     "Episode",
     "Feedback",
@@ -22,12 +24,31 @@ __all__ = [
 ]
 
 
+# The implicit agent every pre-multi-agent episode, rule and policy row belongs to —
+# with no agents configured, the whole system is this one agent (docs/MULTI-AGENT-PLAN.md).
+DEFAULT_AGENT_ID = "default"
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
 def _new_id() -> str:
     return uuid4().hex
+
+
+class AgentProfile(BaseModel):
+    """Identity and specialization of one agent in a team (docs/MULTI-AGENT-PLAN.md).
+    The default profile — every capability, no persona — is exactly the single agent
+    the system had before multi-agent support."""
+
+    id: str = DEFAULT_AGENT_ID
+    name: str = "Default agent"
+    role: str = ""  # short label, e.g. "researcher"; shown to the router and to peers
+    persona: str = ""  # prepended to the planner prompt
+    capabilities: list[str] | None = None  # None = every registered capability; `answer` is always included
+    policy: str | None = None  # linucb | epsilon | greedy; None = settings.policy
+    share: bool = True  # whether this agent pools knowledge with its peers
 
 
 class State(BaseModel):
@@ -94,6 +115,8 @@ class Episode(BaseModel):
     steps: list[Step] = Field(default_factory=list)
     answer: str | None = None  # set once the `answer` capability executes
     session_id: str | None = None  # groups this episode into a conversation (core/session.py)
+    agent_id: str = DEFAULT_AGENT_ID  # which agent in the team ran this episode
+    parent_episode_id: str | None = None  # set on a child episode run via delegation
 
     status: Literal["pending_confirmation", "executed", "cancelled"] = "executed"
 
@@ -116,6 +139,8 @@ class Memory(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
 
     kind: Literal["rule"] = "rule"  # room for "fact"/"preference" later
+    owner_agent_id: str = DEFAULT_AGENT_ID  # the agent whose feedback produced this rule
+    scope: Literal["private", "team"] = "team"  # private = shown to its owner only
     text: str  # generalized, imperative: "always send Accept: application/json to api.example.com"
     capability: str | None = None  # scope hint; None = applies to everything
 

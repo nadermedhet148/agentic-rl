@@ -5,7 +5,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 from agentic_rl.core import text as text_util
-from agentic_rl.core.models import Episode, Memory
+from agentic_rl.core.models import DEFAULT_AGENT_ID, Episode, Memory
 from agentic_rl.llm.distiller import Distiller
 
 _SCHEMA = """
@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS memories (
     support_count INTEGER NOT NULL,
     source_episode_ids TEXT NOT NULL,
     superseded_by TEXT,
-    active INTEGER NOT NULL
+    active INTEGER NOT NULL,
+    owner_agent_id TEXT NOT NULL DEFAULT 'default',
+    scope TEXT NOT NULL DEFAULT 'team'
 );
 CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(active);
 CREATE INDEX IF NOT EXISTS idx_memories_capability ON memories(capability);
@@ -45,6 +47,20 @@ class MemoryStore:
         self._conn = connection
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._ensure_agent_columns()
+
+    def _ensure_agent_columns(self) -> None:
+        """Dev-project migration for multi-agent support (docs/MULTI-AGENT-PLAN.md):
+        rules created before it belong to the default agent and stay team-scoped,
+        so every agent keeps seeing them — the pre-multi-agent behaviour."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(memories)").fetchall()}
+        if "owner_agent_id" not in columns:
+            self._conn.execute(
+                f"ALTER TABLE memories ADD COLUMN owner_agent_id TEXT NOT NULL DEFAULT '{DEFAULT_AGENT_ID}'"
+            )
+        if "scope" not in columns:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'team'")
+        self._conn.commit()
 
     def add(
         self,
@@ -52,8 +68,16 @@ class MemoryStore:
         *,
         capability: str | None = None,
         source_episode_ids: list[str] | None = None,
+        owner_agent_id: str = DEFAULT_AGENT_ID,
+        scope: str = "team",
     ) -> Memory:
-        memory = Memory(text=text, capability=capability, source_episode_ids=source_episode_ids or [])
+        memory = Memory(
+            text=text,
+            capability=capability,
+            source_episode_ids=source_episode_ids or [],
+            owner_agent_id=owner_agent_id,
+            scope=scope,
+        )
         self._save(memory)
         return memory
 
@@ -91,20 +115,27 @@ class MemoryStore:
         self._save(memory)
         return memory
 
-    def active_rules(self, limit: int = 50, capability: str | None = None) -> list[Memory]:
+    def active_rules(
+        self, limit: int = 50, capability: str | None = None, agent_id: str | None = None
+    ) -> list[Memory]:
         """Active rules, most-supported and most-recently-updated first — this is
-        what gets injected into every plan (see llm/prompts.py render_rules())."""
-        if capability is None:
-            rows = self._conn.execute(
-                "SELECT * FROM memories WHERE active = 1 ORDER BY support_count DESC, updated_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                """SELECT * FROM memories WHERE active = 1 AND (capability = ? OR capability IS NULL)
-                   ORDER BY support_count DESC, updated_at DESC LIMIT ?""",
-                (capability, limit),
-            ).fetchall()
+        what gets injected into every plan (see llm/prompts.py render_rules()).
+
+        With `agent_id`, only the rules that agent may see: every team-scoped rule
+        plus its own private ones (docs/MULTI-AGENT-PLAN.md, semantic sharing)."""
+        clauses = ["active = 1"]
+        params: list = []
+        if capability is not None:
+            clauses.append("(capability = ? OR capability IS NULL)")
+            params.append(capability)
+        if agent_id is not None:
+            clauses.append("(scope = 'team' OR owner_agent_id = ?)")
+            params.append(agent_id)
+        rows = self._conn.execute(
+            f"SELECT * FROM memories WHERE {' AND '.join(clauses)} "
+            "ORDER BY support_count DESC, updated_at DESC LIMIT ?",
+            (*params, limit),
+        ).fetchall()
         return [self._row_to_memory(row) for row in rows]
 
     def search(self, query: str, limit: int = 5) -> list[Memory]:
@@ -136,8 +167,8 @@ class MemoryStore:
         self._conn.execute(
             """INSERT OR REPLACE INTO memories
                (id, created_at, updated_at, kind, text, capability, support_count,
-                source_episode_ids, superseded_by, active)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                source_episode_ids, superseded_by, active, owner_agent_id, scope)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 memory.id,
                 memory.created_at.isoformat(),
@@ -149,6 +180,8 @@ class MemoryStore:
                 json.dumps(memory.source_episode_ids),
                 memory.superseded_by,
                 int(memory.active),
+                memory.owner_agent_id,
+                memory.scope,
             ),
         )
         self._conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory.id,))
@@ -170,6 +203,8 @@ class MemoryStore:
             source_episode_ids=json.loads(row["source_episode_ids"]),
             superseded_by=row["superseded_by"],
             active=bool(row["active"]),
+            owner_agent_id=row["owner_agent_id"],
+            scope=row["scope"],
         )
 
 
@@ -211,6 +246,7 @@ class Consolidator:
             result.rule_text,
             capability=result.capability,
             source_episode_ids=[episode.id],
+            owner_agent_id=episode.agent_id,
         )
         if supersedes_id:
             self._memory.supersede(supersedes_id, new_memory.id)

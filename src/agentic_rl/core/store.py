@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agentic_rl.core import text as text_util
-from agentic_rl.core.models import Episode, Feedback
+from agentic_rl.core.models import DEFAULT_AGENT_ID, Episode, Feedback
 from agentic_rl.rl import reward as reward_mod
 
 _SCHEMA = """
@@ -47,9 +47,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
     episode_id UNINDEXED, request, correction, hosts
 );
 CREATE TABLE IF NOT EXISTS policy_state (
-    policy_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    policy_id TEXT NOT NULL,
     state TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, policy_id)
 );
 """
 
@@ -72,6 +74,44 @@ class EpisodeStore:
         self._conn.commit()
         self._ensure_fts_schema()
         self._ensure_session_id_column()
+        self._ensure_agent_columns()
+        self._ensure_policy_state_agent_key()
+
+    def _ensure_agent_columns(self) -> None:
+        """Dev-project migration for multi-agent support (docs/MULTI-AGENT-PLAN.md):
+        episodes created before it belong to the implicit default agent. Same
+        in-place ADD COLUMN approach as _ensure_session_id_column below."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(episodes)").fetchall()}
+        if "agent_id" not in columns:
+            self._conn.execute(
+                f"ALTER TABLE episodes ADD COLUMN agent_id TEXT NOT NULL DEFAULT '{DEFAULT_AGENT_ID}'"
+            )
+        if "parent_episode_id" not in columns:
+            self._conn.execute("ALTER TABLE episodes ADD COLUMN parent_episode_id TEXT")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_agent_id ON episodes(agent_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_parent ON episodes(parent_episode_id)")
+        self._conn.commit()
+
+    def _ensure_policy_state_agent_key(self) -> None:
+        """Dev-project migration: policy_state used to be keyed by policy_id alone.
+        SQLite can't change a primary key in place, so rebuild the table, carrying
+        the old rows over as the default agent's."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(policy_state)").fetchall()}
+        if "agent_id" in columns:
+            return
+        self._conn.execute("ALTER TABLE policy_state RENAME TO policy_state_old")
+        self._conn.execute(
+            """CREATE TABLE policy_state (
+                agent_id TEXT NOT NULL, policy_id TEXT NOT NULL, state TEXT NOT NULL,
+                updated_at TEXT NOT NULL, PRIMARY KEY (agent_id, policy_id))"""
+        )
+        self._conn.execute(
+            "INSERT INTO policy_state (agent_id, policy_id, state, updated_at) "
+            "SELECT ?, policy_id, state, updated_at FROM policy_state_old",
+            (DEFAULT_AGENT_ID,),
+        )
+        self._conn.execute("DROP TABLE policy_state_old")
+        self._conn.commit()
 
     def _ensure_session_id_column(self) -> None:
         """Dev-project migration: episodes created before session support (see
@@ -133,8 +173,8 @@ class EpisodeStore:
             """INSERT OR REPLACE INTO episodes
                (id, created_at, request, source, capability, arm_id, status, outcome_ok,
                 implicit_reward, explicit_score, correction, final_reward, planner_id,
-                policy_id, job_id, session_id, data)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                policy_id, job_id, session_id, agent_id, parent_episode_id, data)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 episode.id,
                 episode.created_at.isoformat(),
@@ -152,6 +192,8 @@ class EpisodeStore:
                 episode.policy_id,
                 job_id,
                 episode.session_id,
+                episode.agent_id,
+                episode.parent_episode_id,
                 episode.model_dump_json(),
             ),
         )
@@ -284,23 +326,33 @@ class EpisodeStore:
         self.save(episode)
         return episode
 
-    def save_policy_state(self, policy_id: str, state: dict[str, Any]) -> None:
+    def save_policy_state(
+        self, policy_id: str, state: dict[str, Any], agent_id: str = DEFAULT_AGENT_ID
+    ) -> None:
+        """One row per (agent, policy) — each agent in a team persists only its own
+        locally learned state (docs/MULTI-AGENT-PLAN.md, procedural sharing)."""
         self._conn.execute(
-            "INSERT OR REPLACE INTO policy_state (policy_id, state, updated_at) VALUES (?, ?, ?)",
-            (policy_id, json.dumps(state), datetime.now(UTC).isoformat()),
+            "INSERT OR REPLACE INTO policy_state (agent_id, policy_id, state, updated_at) VALUES (?, ?, ?, ?)",
+            (agent_id, policy_id, json.dumps(state), datetime.now(UTC).isoformat()),
         )
         self._conn.commit()
 
-    def load_policy_state(self, policy_id: str) -> dict[str, Any] | None:
+    def load_policy_state(self, policy_id: str, agent_id: str = DEFAULT_AGENT_ID) -> dict[str, Any] | None:
         row = self._conn.execute(
-            "SELECT state FROM policy_state WHERE policy_id = ?", (policy_id,)
+            "SELECT state FROM policy_state WHERE agent_id = ? AND policy_id = ?", (agent_id, policy_id)
         ).fetchone()
         return json.loads(row["state"]) if row else None
 
-    def list_episodes(self, limit: int = 50) -> list[Episode]:
-        rows = self._conn.execute(
-            "SELECT data FROM episodes ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+    def list_episodes(self, limit: int = 50, agent_id: str | None = None) -> list[Episode]:
+        if agent_id is None:
+            rows = self._conn.execute(
+                "SELECT data FROM episodes ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT data FROM episodes WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?",
+                (agent_id, limit),
+            ).fetchall()
         return [Episode.model_validate_json(row["data"]) for row in rows]
 
     def list_session_episodes(self, session_id: str, limit: int = 50) -> list[Episode]:
