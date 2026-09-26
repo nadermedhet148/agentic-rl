@@ -37,7 +37,13 @@ You will sometimes be shown the conversation so far in this session (a summary o
 earlier turns and/or the most recent ones verbatim). The user may refer back to \
 something from an earlier turn without repeating it (e.g. "now make that a PDF") — \
 use that section to resolve what "that" means before asking the user to repeat \
-themselves."""
+themselves.
+
+You may be one of several specialist agents on a team. If so, you'll be told your \
+role, and you may be shown examples of similar requests a peer agent handled that the \
+user approved — follow their approach where it fits your capabilities. If a `delegate` \
+capability is listed, use it to hand a sub-task to the peer whose role fits it better \
+than yours, rather than attempting it with capabilities that don't suit it."""
 
 
 def render_history(steps: list[Step], max_chars: int, steps_remaining: int | None = None) -> str:
@@ -94,6 +100,24 @@ def render_corrections(prior_corrections: list[str]) -> str:
     return f"\n\nCorrections from past similar requests (do not repeat these mistakes):\n{bullets}"
 
 
+def render_persona(persona: str) -> str:
+    """This agent's role on a team (core/models.py AgentProfile.persona) — rendered
+    first, since it frames how everything after it should be read."""
+    if not persona:
+        return ""
+    return f"Your role on this team: {persona}\n\n"
+
+
+def render_demonstrations(demonstrations: list[str]) -> str:
+    """Peers' approved handling of similar requests (core/store.py
+    search_demonstrations) — positive few-shot examples, the counterpart of
+    render_corrections' negative ones."""
+    if not demonstrations:
+        return ""
+    bullets = "\n".join(f"- {d}" for d in demonstrations)
+    return f"\n\nApproved examples from peer agents on similar requests:\n{bullets}"
+
+
 def render_rules(rules: list[str]) -> str:
     """Standing rules (core/memory.py Memory.text, via MemoryStore.active_rules) —
     consolidated, deduplicated user preferences. Rendered before recent corrections:
@@ -123,7 +147,12 @@ this correction contradicts an existing rule (the user now wants the opposite), 
 `supersedes_id` to that rule's id instead. Set `capability` to the capability name \
 this rule scopes to (e.g. "http_call") if the correction is clearly capability-specific, \
 or leave it null if it's general. Never set both `matches_existing_id` and \
-`supersedes_id`."""
+`supersedes_id`.
+
+Set `loosens_safety` to true if following the rule would make the agent skip asking \
+the user for confirmation, or perform a side-effecting action (a write, a POST, a \
+schedule, running code) more readily than before — e.g. "don't ask me before placing \
+orders". Rules that add caution, or have nothing to do with confirmation, are false."""
 
 
 def render_existing_rules(existing: list[tuple[str, str]]) -> str:

@@ -17,7 +17,9 @@ from agentic_rl.llm.prompts import (
     SYSTEM_PROMPT,
     render_conversation,
     render_corrections,
+    render_demonstrations,
     render_history,
+    render_persona,
     render_rules,
 )
 
@@ -69,6 +71,8 @@ class LLMPlanner(Planner):
         history: list[Step] | None = None,
         conversation_summary: str = "",
         conversation_turns: list[tuple[str, str]] | None = None,
+        persona: str = "",
+        demonstrations: list[str] | None = None,
     ) -> list[Candidate]:
         history = history or []
         capabilities_block = "\n\n".join(
@@ -76,12 +80,14 @@ class LLMPlanner(Planner):
             for schema in tool_schemas
         )
         user_content = (
+            f"{render_persona(persona)}"
             f"Available capabilities:\n{capabilities_block}\n\n"
             f"Request (source={state.source}): {state.request}"
             f"{render_conversation(conversation_summary, conversation_turns or [], self._history_max_chars)}"
             f"{render_history(history, self._history_max_chars, self._max_steps - len(history))}"
             f"{render_rules(rules or [])}"
             f"{render_corrections(prior_corrections)}"
+            f"{render_demonstrations(demonstrations or [])}"
         )
 
         with observability.generation(self._span_name, model=self._model_name, input=user_content):

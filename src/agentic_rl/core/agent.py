@@ -6,10 +6,12 @@ from typing import Any
 from pydantic import BaseModel
 
 from agentic_rl.capabilities.answer import AnswerCapability
-from agentic_rl.capabilities.base import Outcome, Tier
+from agentic_rl.capabilities.base import Capability, Outcome, Tier
+from agentic_rl.capabilities.delegate import CURRENT_EPISODE, delegation_outcome
 from agentic_rl.capabilities.registry import CapabilityRegistry
 from agentic_rl.core import observability
 from agentic_rl.core.config import Mode, Settings
+from agentic_rl.core.hub import KnowledgeHub
 from agentic_rl.core.memory import Consolidator, MemoryStore
 from agentic_rl.core.models import Action, AgentProfile, Candidate, Episode, Feedback, State, Step
 from agentic_rl.core.session import SessionStore
@@ -21,6 +23,17 @@ from agentic_rl.policy.base import Arm, Policy
 from agentic_rl.rl import reward as reward_mod
 
 EventCallback = Callable[[str, BaseModel], None]
+
+
+class _PlanContext(BaseModel):
+    """Everything retrieved from memory for one planning call — gathered in one
+    place (Agent._plan_context) so run/confirm/resume all plan with the same inputs."""
+
+    corrections: list[str]
+    rules: list[str]
+    demonstrations: list[str]
+    conversation_summary: str = ""
+    conversation_turns: list[tuple[str, str]] = []
 
 _NO_CANDIDATE = Candidate(
     capability="",
@@ -62,14 +75,22 @@ class Agent:
         sessions: SessionStore,
         summarizer: Summarizer,
         profile: AgentProfile | None = None,
+        hub: KnowledgeHub | None = None,
+        extra_capabilities: list[Capability] | None = None,
     ):
         self._profile = profile or AgentProfile()
         if registry.get_or_none("answer") is None:
             registry.register(AnswerCapability())
-        if self._profile.capabilities is not None:
+        if self._profile.capabilities is not None or extra_capabilities:
             # this agent's slice of the team's capabilities; `answer` is always in it,
-            # since every agent must be able to finish an episode
-            registry = registry.view([*self._profile.capabilities, "answer"])
+            # since every agent must be able to finish an episode. Extras (e.g. its own
+            # `delegate`) go on this private view, never on the shared registry.
+            names = self._profile.capabilities if self._profile.capabilities is not None else registry.names()
+            # `delegate` is per-agent (it lists the agent's peers), so it only ever
+            # arrives via extra_capabilities, even if a profile names it
+            registry = registry.view([*(n for n in names if n != "delegate"), "answer"])
+            for capability in extra_capabilities or []:
+                registry.register(capability)
         self._planner = planner
         self._policy = policy
         self._registry = registry
@@ -79,6 +100,7 @@ class Agent:
         self._consolidator = consolidator
         self._sessions = sessions
         self._summarizer = summarizer
+        self._hub = hub
 
     @property
     def id(self) -> str:
@@ -92,6 +114,45 @@ class Agent:
     def policy(self) -> Policy:
         return self._policy
 
+    @property
+    def registry(self) -> CapabilityRegistry:
+        return self._registry
+
+    def _plan_context(self, episode: Episode) -> _PlanContext:
+        """Corrections, rules and — in a team — peers' demonstrations for this
+        episode's request, plus its session's conversation so far."""
+        request = episode.state.request
+        peer_weights = self._hub.peer_weights(self.id) if self._hub is not None else {}
+        corrections = self._store.search_corrections(
+            request,
+            limit=self._settings.corrections_top_k,
+            agent_id=self.id,
+            peer_weights=peer_weights,
+            min_trust=self._settings.peer_min_trust,
+        )
+        capabilities = self._registry.names() if self._profile.capabilities is not None else None
+        rules = [m.text for m in self._memory.active_rules(agent_id=self.id, capabilities=capabilities)]
+        demonstrations = (
+            self._store.search_demonstrations(
+                request,
+                self.id,
+                peer_weights,
+                capabilities=set(self._registry.names()),
+                limit=self._settings.demonstrations_top_k,
+                min_trust=self._settings.peer_min_trust,
+            )
+            if peer_weights
+            else []
+        )
+        summary, turns, _ = self._session_context(episode.session_id)
+        return _PlanContext(
+            corrections=corrections,
+            rules=rules,
+            demonstrations=demonstrations,
+            conversation_summary=summary,
+            conversation_turns=turns,
+        )
+
     async def run(
         self,
         request: str,
@@ -99,9 +160,16 @@ class Agent:
         episode_id: str | None = None,
         on_event: EventCallback | None = None,
         session_id: str | None = None,
+        parent: Episode | None = None,
+        routed: bool = False,
     ) -> Episode:
-        with observability.span("agent.run", input=request, source=source, mode=self._settings.mode.value):
-            if source == "user":
+        """`parent` is set when a peer delegated this request (capabilities/delegate.py):
+        the episode becomes its child, runs session-less, and never takes the
+        parent's trace id as its own id."""
+        with observability.span(
+            "agent.run", input=request, source=source, mode=self._settings.mode.value, agent_id=self.id
+        ):
+            if source == "user" and parent is None:
                 self._store.maybe_penalize_reissue(request, source)
 
             state = State(
@@ -109,23 +177,25 @@ class Agent:
                 source=source,
                 prior_correction_count=self._store.correction_count(request),
             )
-            corrections = self._store.search_corrections(request, limit=self._settings.corrections_top_k)
-            rules = [m.text for m in self._memory.active_rules(agent_id=self.id)]
-            conversation_summary, conversation_turns, resolved_session_id = self._session_context(session_id)
+            _, _, resolved_session_id = self._session_context(session_id if parent is None else None)
 
-            resolved_episode_id = episode_id or observability.get_current_trace_id()
+            resolved_episode_id = episode_id or (observability.get_current_trace_id() if parent is None else None)
             episode_kwargs: dict[str, Any] = {
                 "state": state,
                 "planner_id": self._planner.id,
                 "policy_id": self._policy.id,
                 "session_id": resolved_session_id,
                 "agent_id": self.id,
+                "routed": routed,
             }
+            if parent is not None:
+                episode_kwargs["parent_episode_id"] = parent.id
+                episode_kwargs["delegation_depth"] = parent.delegation_depth + 1
             if resolved_episode_id:
                 episode_kwargs["id"] = resolved_episode_id
             episode = Episode(**episode_kwargs)
 
-            await self._advance(episode, corrections, rules, on_event, conversation_summary, conversation_turns)
+            await self._advance(episode, self._plan_context(episode), on_event)
             observability.update_current_span(output=_span_output(episode))
             return episode
 
@@ -152,19 +222,58 @@ class Agent:
                 raise ValueError(f"episode {episode_id} is not pending confirmation (status={episode.status})")
 
             pending = episode.steps[-1]
+            if pending.child_episode_id:
+                raise ValueError(
+                    f"episode {episode_id} is waiting on delegated episode {pending.child_episode_id}; "
+                    "confirm that one (core/team.py does this automatically)"
+                )
             arm = self._arm_for(episode.state, pending.action.candidate)
             done = await self._execute_step(episode, pending, arm, on_event)
             if not done:
-                corrections = self._store.search_corrections(
-                    episode.state.request, limit=self._settings.corrections_top_k
-                )
-                rules = [m.text for m in self._memory.active_rules(agent_id=self.id)]
-                conversation_summary, conversation_turns, _ = self._session_context(episode.session_id)
-                await self._advance(
-                    episode, corrections, rules, on_event, conversation_summary, conversation_turns
-                )
+                await self._advance(episode, self._plan_context(episode), on_event)
             observability.update_current_span(output=_span_output(episode))
             return episode
+
+    async def resume_delegation(
+        self, episode_id: str, child: Episode, on_event: EventCallback | None = None
+    ) -> Episode:
+        """Continue an episode that paused on a `delegate` step once the child
+        episode it was waiting on has finished (core/team.py calls this)."""
+        with observability.span("agent.resume_delegation", input=episode_id, trace_id=episode_id):
+            episode = self._store.get(episode_id)
+            if episode is None:
+                raise KeyError(f"unknown episode: {episode_id}")
+            pending = episode.steps[-1] if episode.steps else None
+            if (
+                episode.status != "pending_confirmation"
+                or pending is None
+                or pending.outcome is not None
+                or pending.child_episode_id != child.id
+            ):
+                raise ValueError(f"episode {episode_id} is not waiting on delegated episode {child.id}")
+
+            arm = self._arm_for(episode.state, pending.action.candidate)
+            self._finalize_step(episode, pending, delegation_outcome(child), arm)
+            if on_event:
+                on_event("step", pending)
+            await self._advance(episode, self._plan_context(episode), on_event)
+            observability.update_current_span(output=_span_output(episode))
+            return episode
+
+    def apply_delegated_credit(self, episode_id: str, reward: float) -> Episode | None:
+        """Share of a parent episode's feedback passed down to the child episode this
+        agent ran for it (docs/MULTI-AGENT-PLAN.md, credit assignment): every step's
+        arm is updated with `reward`, already discounted by the caller."""
+        episode = self._store.get(episode_id)
+        if episode is None:
+            return None
+        for step in episode.steps:
+            if step.outcome is not None:
+                self._update_policy(self._arm_for(episode.state, step.action.candidate), reward)
+        if episode.explicit_score is None:
+            episode.final_reward = reward
+            self._store.save(episode)
+        return episode
 
     async def record_feedback(self, feedback: Feedback) -> Episode:
         with observability.span(
@@ -177,8 +286,7 @@ class Agent:
             episode = self._store.apply_feedback(feedback)
             weighted = reward_mod.weighted_reward(episode.explicit_score, episode.correction, episode.implicit_reward)
             for step in episode.steps:
-                self._policy.update(self._arm_for(episode.state, step.action.candidate), weighted)
-            self._persist_policy()
+                self._update_policy(self._arm_for(episode.state, step.action.candidate), weighted)
             if feedback.correction:
                 await self._consolidator.consolidate(feedback.correction, episode)
             observability.update_current_span(output=_span_output(episode))
@@ -189,29 +297,29 @@ class Agent:
         the scheduler is the caller's responsibility (see scheduler/scheduler.py)."""
         return self._store.mark_task_cancelled(job_id)
 
-    async def _advance(
-        self,
-        episode: Episode,
-        corrections: list[str],
-        rules: list[str],
-        on_event: EventCallback | None,
-        conversation_summary: str = "",
-        conversation_turns: list[tuple[str, str]] | None = None,
-    ) -> None:
+    async def _advance(self, episode: Episode, context: _PlanContext, on_event: EventCallback | None) -> None:
         """Plan -> select -> (confirm gate) -> execute -> observe, looped until an
         `answer` step executes, the planner has nothing left to propose, or
         settings.max_steps is reached. Mutates and saves `episode` in place; returns
         (without marking it executed) if a step needs confirmation."""
         while len(episode.steps) < self._settings.max_steps:
             with observability.span("agent.step", input=episode.state.request, index=len(episode.steps)):
+                # team-only planner inputs are passed only when present, so a planner
+                # written against the single-agent signature keeps working (llm/base.py)
+                extra: dict[str, Any] = {}
+                if self._profile.persona:
+                    extra["persona"] = self._profile.persona
+                if context.demonstrations:
+                    extra["demonstrations"] = context.demonstrations
                 candidates = await self._planner.plan(
                     episode.state,
                     self._registry.tool_schemas(),
-                    corrections,
-                    rules,
+                    context.corrections,
+                    context.rules,
                     history=episode.steps,
-                    conversation_summary=conversation_summary,
-                    conversation_turns=conversation_turns,
+                    conversation_summary=context.conversation_summary,
+                    conversation_turns=context.conversation_turns,
+                    **extra,
                 )
                 if not candidates:
                     if episode.steps:
@@ -220,6 +328,8 @@ class Agent:
                 if not episode.steps:
                     episode.state.intent = candidates[0].capability or None
 
+                if self._hub is not None:
+                    self._hub.refresh(self.id)  # pool peers' latest evidence before choosing
                 arms = [self._arm_for(episode.state, c) for c in candidates]
                 explore_mask = [self._explore_allowed(c) for c in candidates]
                 idx, explored = self._policy.select(arms, explore_mask)
@@ -252,9 +362,20 @@ class Agent:
     ) -> bool:
         """Execute one step's action, finalize its reward, and — if it was the
         terminal `answer` capability — set the episode's answer/status. Returns True
-        if the episode is now complete."""
+        if the loop should stop advancing: the episode is complete, or it's waiting
+        on a delegated child episode that paused for confirmation."""
         capability = self._registry.get_or_none(step.action.candidate.capability)
-        outcome = await self._execute(capability, step.action.candidate)
+        outcome = await self._execute(capability, step.action.candidate, episode)
+        if isinstance(outcome.payload, dict) and outcome.payload.get("child_episode_id"):
+            step.child_episode_id = outcome.payload["child_episode_id"]
+            if outcome.payload.get("pending"):
+                # the peer paused on its own confirm gate — so does this episode; the
+                # step's outcome and reward are filled in by resume_delegation later
+                episode.status = "pending_confirmation"
+                self._store.save(episode)
+                if on_event:
+                    on_event("step", step)
+                return True
         self._finalize_step(episode, step, outcome, arm)
         if on_event:
             on_event("step", step)
@@ -301,8 +422,18 @@ class Agent:
         episode.implicit_reward = sum(finalized) / len(finalized)
         episode.final_reward = episode.implicit_reward
         self._store.save(episode)
-        self._policy.update(arm, reward_mod.weighted_reward(None, None, step.implicit_reward))
+        self._update_policy(arm, reward_mod.weighted_reward(None, None, step.implicit_reward))
+
+    def _update_policy(self, arm: Arm, reward: float) -> None:
+        """Every policy update goes through here: the hub first scores peers'
+        predictions against this reward (trust — core/hub.py), then the local policy
+        learns, is persisted, and peers are told its evidence changed."""
+        if self._hub is not None:
+            self._hub.observe(self.id, arm, reward)
+        self._policy.update(arm, reward)
         self._persist_policy()
+        if self._hub is not None:
+            self._hub.mark_updated(self.id)
 
     def _persist_policy(self) -> None:
         """Save the policy's learned state after every update — see policy/base.py
@@ -340,15 +471,18 @@ class Agent:
             return True  # every write-tier action requires confirmation in prod-strict
         return candidate.needs_confirmation
 
-    async def _execute(self, capability, candidate: Candidate) -> Outcome:
+    async def _execute(self, capability, candidate: Candidate, episode: Episode) -> Outcome:
         with observability.span("capability.execute", input=candidate.params, capability=candidate.capability):
             if capability is None:
                 outcome = Outcome(ok=False, error=f"unknown capability: {candidate.capability!r}")
             else:
+                token = CURRENT_EPISODE.set(episode)  # lets `delegate` see who's asking
                 try:
                     outcome = await capability.execute(candidate.params)
                 except Exception as exc:  # noqa: BLE001 - a capability bug must not crash the loop
                     outcome = Outcome(ok=False, error=f"{type(exc).__name__}: {exc}")
+                finally:
+                    CURRENT_EPISODE.reset(token)
             observability.update_current_span(
                 output={"ok": outcome.ok, "status": outcome.status, "error": outcome.error}
             )

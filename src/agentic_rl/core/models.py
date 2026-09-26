@@ -97,6 +97,7 @@ class Step(BaseModel):
 
     outcome: Outcome | None = None  # None while pending_confirmation
     implicit_reward: float = 0.0
+    child_episode_id: str | None = None  # the peer's episode, when this step was a `delegate`
 
 
 class Episode(BaseModel):
@@ -117,6 +118,8 @@ class Episode(BaseModel):
     session_id: str | None = None  # groups this episode into a conversation (core/session.py)
     agent_id: str = DEFAULT_AGENT_ID  # which agent in the team ran this episode
     parent_episode_id: str | None = None  # set on a child episode run via delegation
+    delegation_depth: int = 0  # 0 for a top-level episode, parent's depth + 1 for a child
+    routed: bool = False  # True when the team's Router picked the agent (core/router.py)
 
     status: Literal["pending_confirmation", "executed", "cancelled"] = "executed"
 
@@ -145,9 +148,12 @@ class Memory(BaseModel):
     capability: str | None = None  # scope hint; None = applies to everything
 
     support_count: int = 1
+    support_by_agent: dict[str, int] = Field(default_factory=dict)  # which agents' feedback backs it
     source_episode_ids: list[str] = Field(default_factory=list)
     superseded_by: str | None = None
     active: bool = True
+    loosens_safety: bool = False  # removes a confirmation / widens a write — never auto-promoted
+    overrides_id: str | None = None  # a team rule this private rule overrides, for its owner only
 
 
 class Session(BaseModel):

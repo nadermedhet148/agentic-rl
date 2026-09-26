@@ -236,7 +236,14 @@ class EpisodeStore:
         self.save(episode)
         return episode
 
-    def search_corrections(self, request: str, limit: int = 5) -> list[str]:
+    def search_corrections(
+        self,
+        request: str,
+        limit: int = 5,
+        agent_id: str | None = None,
+        peer_weights: dict[str, float] | None = None,
+        min_trust: float = 0.2,
+    ) -> list[str]:
         """Corrections from past episodes whose request text overlaps this one —
         rendered into the planner prompt so a fix applies on the very next similar
         request (see llm/prompts.py:render_corrections).
@@ -247,6 +254,11 @@ class EpisodeStore:
         terms", so a min-token-overlap filter runs in Python after the ranked
         fetch — a single shared stopword-free token isn't enough to count as
         "similar" unless the query itself only has one token to begin with.
+
+        With `agent_id` (docs/MULTI-AGENT-PLAN.md, episodic sharing), that agent's
+        own corrections come first, then corrections given to peers it trusts at
+        least `min_trust` (per `peer_weights`), most-trusted peer first, labelled
+        as coming from a peer. Without it, every agent's corrections, unlabelled.
         """
         query_tokens = text_util.tokenize(request)
         query = text_util.fts_query(query_tokens)
@@ -255,21 +267,80 @@ class EpisodeStore:
         required_overlap = text_util.min_overlap(query_tokens)
         weights = ", ".join(str(w) for w in _BM25_WEIGHTS)
         rows = self._conn.execute(
-            f"""SELECT e.correction AS correction, e.request AS request,
+            f"""SELECT e.correction AS correction, e.request AS request, e.agent_id AS agent_id,
                        bm25(episodes_fts, {weights}) AS score
                 FROM episodes_fts f JOIN episodes e ON e.id = f.episode_id
                 WHERE episodes_fts MATCH ? AND e.correction IS NOT NULL AND e.correction != ''
                 ORDER BY score LIMIT ?""",
             (query, max(limit * 4, 20)),
         ).fetchall()
+        rows = [r for r in rows if len(query_tokens & text_util.tokenize(r["request"])) >= required_overlap]
 
-        results = []
+        if agent_id is None:
+            return [f"for a request like '{r['request']}': {r['correction']}" for r in rows[:limit]]
+
+        weights_by_peer = {p: w for p, w in (peer_weights or {}).items() if w >= min_trust and p != agent_id}
+        own = [f"for a request like '{r['request']}': {r['correction']}" for r in rows if r["agent_id"] == agent_id]
+        peer_rows = [r for r in rows if r["agent_id"] in weights_by_peer]
+        peer_rows.sort(key=lambda r: -weights_by_peer[r["agent_id"]])  # stable: keeps bm25 order within a peer
+        peers = [
+            f"(from peer agent '{r['agent_id']}') for a request like '{r['request']}': {r['correction']}"
+            for r in peer_rows
+        ]
+        return (own + peers)[:limit]
+
+    def search_demonstrations(
+        self,
+        request: str,
+        agent_id: str,
+        peer_weights: dict[str, float],
+        capabilities: set[str] | None = None,
+        limit: int = 3,
+        min_trust: float = 0.2,
+    ) -> list[str]:
+        """Positive examples from trusted peers (docs/MULTI-AGENT-PLAN.md, episodic
+        sharing): episodes with a similar request that a peer completed and the user
+        rewarded, restricted to ones whose capabilities this agent actually has
+        (`capabilities`; None = every capability). Rendered into the planner prompt
+        as few-shot examples (llm/prompts.py render_demonstrations)."""
+        weights_by_peer = {p: w for p, w in peer_weights.items() if w >= min_trust and p != agent_id}
+        query_tokens = text_util.tokenize(request)
+        query = text_util.fts_query(query_tokens)
+        if not query or not weights_by_peer:
+            return []
+        required_overlap = text_util.min_overlap(query_tokens)
+        weights = ", ".join(str(w) for w in _BM25_WEIGHTS)
+        placeholders = ", ".join("?" for _ in weights_by_peer)
+        rows = self._conn.execute(
+            f"""SELECT e.data AS data, bm25(episodes_fts, {weights}) AS score
+                FROM episodes_fts f JOIN episodes e ON e.id = f.episode_id
+                WHERE episodes_fts MATCH ? AND e.final_reward > 0 AND e.status = 'executed'
+                      AND e.agent_id IN ({placeholders})
+                ORDER BY score LIMIT ?""",
+            (query, *weights_by_peer, max(limit * 4, 20)),
+        ).fetchall()
+
+        candidates: list[tuple[float, str]] = []
         for row in rows:
-            if len(query_tokens & text_util.tokenize(row["request"])) >= required_overlap:
-                results.append(f"for a request like '{row['request']}': {row['correction']}")
-            if len(results) >= limit:
-                break
-        return results
+            episode = Episode.model_validate_json(row["data"])
+            if len(query_tokens & text_util.tokenize(episode.state.request)) < required_overlap:
+                continue
+            used = {s.action.candidate.capability for s in episode.steps} - {"answer"}
+            if capabilities is not None and not used <= capabilities:
+                continue
+            actions = " -> ".join(
+                f"{s.action.candidate.capability}({json.dumps(s.action.candidate.params, default=str)[:200]})"
+                for s in episode.steps
+            )
+            candidates.append(
+                (
+                    weights_by_peer[episode.agent_id],
+                    f"peer agent '{episode.agent_id}' handled '{episode.state.request}' with: {actions} "
+                    "— the user approved",
+                )
+            )
+        candidates.sort(key=lambda c: -c[0])
+        return [text for _, text in candidates[:limit]]
 
     def correction_count(self, request: str, limit: int = 1000) -> int:
         return len(self.search_corrections(request, limit=limit))
@@ -281,13 +352,15 @@ class EpisodeStore:
         ).fetchone()
         return default if row is None or row["rate"] is None else float(row["rate"])
 
-    def rolling_reward(self, n: int = 100) -> list[float]:
+    def rolling_reward(self, n: int = 100, agent_id: str | None = None) -> list[float]:
         """Most-recent-first N episodes' reward (final if feedback was given, else
-        implicit), returned in chronological order for plotting a learning curve."""
+        implicit), returned in chronological order for plotting a learning curve —
+        of one agent, with `agent_id`."""
+        where, params = ("WHERE agent_id = ? ", (agent_id,)) if agent_id is not None else ("", ())
         rows = self._conn.execute(
-            "SELECT COALESCE(final_reward, implicit_reward) AS r FROM episodes "
+            f"SELECT COALESCE(final_reward, implicit_reward) AS r FROM episodes {where}"
             "ORDER BY created_at DESC LIMIT ?",
-            (n,),
+            (*params, n),
         ).fetchall()
         return [row["r"] for row in reversed(rows)]
 

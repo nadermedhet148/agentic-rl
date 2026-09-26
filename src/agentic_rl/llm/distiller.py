@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from abc import ABC, abstractmethod
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")  # suppress the startup ASCII banner in logs/tests
@@ -24,6 +25,9 @@ class DistillResult(BaseModel):
     capability: str | None = None
     matches_existing_id: str | None = None
     supersedes_id: str | None = None
+    # True if following the rule would skip a confirmation or make a write-tier action
+    # happen more readily — such a rule is never auto-shared across agents (core/memory.py).
+    loosens_safety: bool = False
 
 
 class Distiller(ABC):
@@ -104,6 +108,20 @@ class LLMDistiller(Distiller):
         return result_output
 
 
+_LOOSENS_SAFETY_RE = re.compile(
+    r"(don'?t|do not|never|no need to|stop|without)\s+(ask(ing)?|confirm(ing|ation)?|check(ing)? with)"
+    r"|skip(ping)?\s+(the\s+)?confirm",
+    re.IGNORECASE,
+)
+
+
+def loosens_safety_heuristic(text: str) -> bool:
+    """No-LLM guess at whether a rule removes a confirmation step — MockDistiller's
+    stand-in for the LLM's judgment. Errs toward flagging, which only ever costs an
+    automatic promotion, never safety."""
+    return bool(_LOOSENS_SAFETY_RE.search(text))
+
+
 class MockDistiller(Distiller):
     """Deterministic distiller — no network, no API key. Used by tests and the
     simulator. The rule is the correction text verbatim; it matches an existing rule
@@ -114,7 +132,8 @@ class MockDistiller(Distiller):
 
     async def distill(self, correction: str, episode: Episode, existing: list[Memory]) -> DistillResult:
         normalized = " ".join(correction.lower().split())
+        loosens = loosens_safety_heuristic(correction)
         for memory in existing:
             if " ".join(memory.text.lower().split()) == normalized:
-                return DistillResult(rule_text=correction, matches_existing_id=memory.id)
-        return DistillResult(rule_text=correction)
+                return DistillResult(rule_text=correction, matches_existing_id=memory.id, loosens_safety=loosens)
+        return DistillResult(rule_text=correction, loosens_safety=loosens)

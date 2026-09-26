@@ -43,6 +43,20 @@ class Settings(BaseSettings):
     reports_dir: Path = Path("reports")
     session_summarize_every: int = 5  # fold conversation turns into the rolling summary this often
 
+    # Multi-agent team (docs/MULTI-AGENT-PLAN.md). With no agents_file, the team is
+    # one implicit "default" agent with every capability — the single-agent setup.
+    agents_file: Path | None = None  # JSON list of AgentProfile objects; see agents.example.json
+    share_knowledge: bool = True  # master switch for agents learning from each other
+    trust_prior: float = 0.5  # trust in a peer before there's evidence either way
+    trust_beta: float = 0.1  # EMA rate for learned trust (core/hub.py)
+    trust_min_obs: int = 2  # observations before learned trust replaces the prior
+    peer_min_trust: float = 0.2  # peers trusted less than this don't feed corrections/examples
+    demonstrations_top_k: int = 3  # peers' approved examples shown to the planner
+    router_prior_weight: float = 0.5  # weight of the capability-cue prior in routing (core/router.py)
+    delegation_enabled: bool = True
+    max_delegation_depth: int = 1  # a delegated child may not delegate again
+    delegation_credit: float = 0.5  # share of a parent's feedback passed to its child episode
+
     # Langfuse tracing (see docs/OBSERVABILITY.md) — off by default. Everything
     # else Langfuse needs (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL,
     # ...) is read directly from the environment by the langfuse SDK itself, not

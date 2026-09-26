@@ -21,6 +21,9 @@ def _param_template(capability: str, params: dict) -> dict:
             "header_keys": sorted((params.get("headers") or {}).keys()),
             "has_body": params.get("json_body") is not None,
         }
+    if capability == "delegate":
+        # which peer is the decision — so agents learn *whom* to ask, per peer
+        return {"agent_id": str(params.get("agent_id", ""))}
     if capability == "schedule_task":
         return {
             "kind": "cron" if params.get("cron") else "run_at",

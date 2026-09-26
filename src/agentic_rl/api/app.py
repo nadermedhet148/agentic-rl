@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from fastapi.staticfiles import StaticFiles
 
 from agentic_rl import __version__
 from agentic_rl.api.routes import router
+from agentic_rl.capabilities.base import Capability
+from agentic_rl.capabilities.delegate import DelegateCapability
 from agentic_rl.capabilities.generate_report import GenerateReportCapability
 from agentic_rl.capabilities.http_call import HttpCallCapability
 from agentic_rl.capabilities.registry import CapabilityRegistry
@@ -20,9 +23,13 @@ from agentic_rl.capabilities.web_search import DdgsSearchPort, WebSearchCapabili
 from agentic_rl.core import observability
 from agentic_rl.core.agent import Agent
 from agentic_rl.core.config import Settings, get_settings
+from agentic_rl.core.hub import KnowledgeHub
 from agentic_rl.core.memory import Consolidator, MemoryStore
+from agentic_rl.core.models import AgentProfile
+from agentic_rl.core.router import Router
 from agentic_rl.core.session import SessionStore
 from agentic_rl.core.store import EpisodeStore
+from agentic_rl.core.team import Team
 from agentic_rl.llm.base import Planner
 from agentic_rl.llm.distiller import Distiller, MockDistiller
 from agentic_rl.llm.mock import MockPlanner, heuristic_default_fn
@@ -50,12 +57,27 @@ def _build_planner(settings: Settings) -> Planner:
     )
 
 
-def _build_policy(settings: Settings) -> Policy:
+def _build_policy(settings: Settings, policy_id: str | None = None) -> Policy:
     return {
         "linucb": LinUCBPolicy,
         "epsilon": EpsilonGreedyPolicy,
         "greedy": GreedyPolicy,
-    }.get(settings.policy, LinUCBPolicy)()
+    }.get(policy_id or settings.policy, LinUCBPolicy)()
+
+
+def load_profiles(settings: Settings) -> list[AgentProfile]:
+    """The team's agents, from settings.agents_file (a JSON list of AgentProfile
+    objects — see agents.example.json), or the single implicit default agent."""
+    if settings.agents_file is None:
+        return [AgentProfile()]
+    raw = json.loads(Path(settings.agents_file).read_text(encoding="utf-8"))
+    profiles = [AgentProfile.model_validate(item) for item in raw]
+    if not profiles:
+        raise ValueError(f"{settings.agents_file}: needs at least one agent")
+    ids = [p.id for p in profiles]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"{settings.agents_file}: duplicate agent ids in {ids}")
+    return profiles
 
 
 def _build_distiller(settings: Settings) -> Distiller:
@@ -89,14 +111,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     http_client = httpx.AsyncClient()
     store = EpisodeStore(settings.db_path)
 
-    # Forward reference: the scheduler needs a runner that calls the agent, but the
-    # agent needs a registry that needs the scheduler (for schedule_task) — resolved
-    # with a mutable box filled in once `agent` exists, just below.
-    agent_box: dict[str, Agent] = {}
+    # Forward reference: the scheduler needs a runner that calls the team, but the
+    # team's agents need a registry that needs the scheduler (for schedule_task) —
+    # resolved with a mutable box filled in once `team` exists, just below.
+    agent_box: dict[str, Team] = {}
 
     async def _scheduled_runner(instruction: str) -> None:
         with observability.trace("scheduler.run", input=instruction, source="scheduler"):
-            await agent_box["agent"].run(instruction, source="scheduler")
+            await agent_box["team"].run(instruction, source="scheduler")
 
     scheduler = AgentScheduler(settings.db_path, _scheduled_runner)
 
@@ -127,20 +149,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.reports_dir.mkdir(parents=True, exist_ok=True)
     registry.register(GenerateReportCapability(settings.reports_dir))
 
+    # One planner/distiller/summarizer serve every agent (they're stateless); each
+    # agent gets its own policy, persisted under its own id. See docs/MULTI-AGENT-PLAN.md.
     planner = _build_planner(settings)
-    policy = _build_policy(settings)
-    saved_state = store.load_policy_state(policy.id)
-    if saved_state is not None:
-        policy.load_state(saved_state)
+    profiles = load_profiles(settings)
+    is_team = len(profiles) > 1
 
     memory = MemoryStore(store.connection)
-    consolidator = Consolidator(memory, _build_distiller(settings))
+    # in a team, a correction's rule starts private to the agent that got it and is
+    # promoted once a peer's feedback independently agrees (core/memory.py)
+    consolidator = Consolidator(memory, _build_distiller(settings), default_scope="private" if is_team else "team")
     sessions = SessionStore(store.connection)
-
-    agent = Agent(
-        planner, policy, registry, store, settings, memory, consolidator, sessions, _build_summarizer(settings)
+    summarizer = _build_summarizer(settings)
+    hub = KnowledgeHub(
+        store.connection,
+        prior=settings.trust_prior,
+        beta=settings.trust_beta,
+        min_obs=settings.trust_min_obs,
+        enabled=settings.share_knowledge and is_team,
     )
-    agent_box["agent"] = agent
+
+    agents: list[Agent] = []
+    delegates: list[DelegateCapability] = []
+    for profile in profiles:
+        policy = _build_policy(settings, profile.policy)
+        saved_state = store.load_policy_state(policy.id, agent_id=profile.id)
+        if saved_state is not None:
+            policy.load_state(saved_state)
+        extras: list[Capability] = []
+        if is_team and settings.delegation_enabled:
+            delegate = DelegateCapability(profile.id, profiles, max_depth=settings.max_delegation_depth)
+            delegates.append(delegate)
+            extras.append(delegate)
+        agents.append(
+            Agent(
+                planner,
+                policy,
+                registry,
+                store,
+                settings,
+                memory,
+                consolidator,
+                sessions,
+                summarizer,
+                profile=profile,
+                hub=hub if is_team else None,
+                extra_capabilities=extras,
+            )
+        )
+        hub.register(profile.id, policy, share=profile.share)
+
+    agent_router = Router(profiles, prior_weight=settings.router_prior_weight) if is_team else None
+    team = Team(agents, store, settings, hub, agent_router)
+    for delegate in delegates:
+        delegate.bind(team.delegate)
+    agent_box["team"] = team
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -159,7 +222,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.store = store
     app.state.scheduler = scheduler
-    app.state.agent = agent
+    app.state.team = team
+    app.state.agent = team.default_agent  # back-compat: the single-agent entry point
+    app.state.hub = hub
     app.state.registry = registry
     app.state.memory = memory
     app.state.sessions = sessions

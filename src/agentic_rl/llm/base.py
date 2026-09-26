@@ -21,6 +21,8 @@ class Planner(ABC):
         history: list[Step] | None = None,
         conversation_summary: str = "",
         conversation_turns: list[tuple[str, str]] | None = None,
+        persona: str = "",
+        demonstrations: list[str] | None = None,
     ) -> list[Candidate]:
         """Return one or more candidate actions, most-likely-correct first.
 
@@ -45,5 +47,10 @@ class Planner(ABC):
         active — see llm/prompts.py render_conversation(). Distinct from `history`:
         this spans separate episodes (separate user messages), `history` is only
         this one episode's own steps.
+
+        `persona` is this agent's role on a team and `demonstrations` are peers'
+        approved handling of similar requests (docs/MULTI-AGENT-PLAN.md). core/agent.py
+        only passes them when non-empty, so a planner written against the
+        single-agent signature keeps working for a single-agent setup.
         """
         ...

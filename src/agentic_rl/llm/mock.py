@@ -46,6 +46,8 @@ class MockPlanner(Planner):
         history: list[Step] | None = None,
         conversation_summary: str = "",
         conversation_turns: list[tuple[str, str]] | None = None,
+        persona: str = "",
+        demonstrations: list[str] | None = None,
     ) -> list[Candidate]:
         history = history or []
         if history:

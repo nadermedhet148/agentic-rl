@@ -140,12 +140,47 @@ def _summarize(rewards: list[float], window: int = 100) -> None:
     print("  reward curve (10 buckets): " + " ".join(f"{v:+.2f}" for v in curve))
 
 
+def _team_main(scenario: str, share: str, episodes: int) -> None:
+    """Multi-agent scenarios (sim/team.py) — prints sharing on vs off side by side
+    unless --share picks one."""
+    from agentic_rl.sim import team
+
+    shares = [True, False] if share == "both" else [share == "on"]
+    if scenario == "routing":
+        correct = asyncio.run(team.run_routing(episodes=episodes))
+        print("scenario=routing (Router pick accuracy; capability-cue prior off)")
+        _summarize([float(c) for c in correct])
+        return
+    for on in shares:
+        print(f"scenario={scenario} share={'on' if on else 'off'}")
+        if scenario == "transfer":
+            _summarize(asyncio.run(team.run_transfer(on, episodes_b=episodes)), window=15)
+        else:
+            rewards, sim = asyncio.run(team.run_conflict(on, rounds=episodes))
+            for agent_id, series in rewards.items():
+                print(f" agent {agent_id}:")
+                _summarize(series, window=30)
+            for row in sim.hub.trust_matrix():
+                print(f"  trust {row['agent_id']} -> {row['peer_id']}: {row['trust']:.2f}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the agentic-rl learning simulator.")
     parser.add_argument("--policy", choices=["linucb", "epsilon", "greedy"], default="linucb")
     parser.add_argument("--episodes", type=int, default=500)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--scenario",
+        choices=["single", "transfer", "conflict", "routing"],
+        default="single",
+        help="single = one agent (the original simulator); the rest are multi-agent (sim/team.py)",
+    )
+    parser.add_argument("--share", choices=["on", "off", "both"], default="both")
     args = parser.parse_args()
+
+    if args.scenario != "single":
+        _team_main(args.scenario, args.share, args.episodes)
+        return
 
     rewards, memory = asyncio.run(run_simulation(args.policy, args.episodes, args.seed))
     print(f"policy={args.policy}")

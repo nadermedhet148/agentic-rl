@@ -11,7 +11,14 @@ PREFERRED_TIMEZONE = "Europe/Berlin"
 
 class ScriptedUser:
     """Deterministically grades a chosen candidate against a fixed set of preferences,
-    producing the same (score, correction) shape as a real Feedback."""
+    producing the same (score, correction) shape as a real Feedback.
+
+    `order_confirmation=False` flips one preference — this user finds being asked to
+    confirm orders annoying — so two agents serving users that disagree can be
+    simulated (sim/team.py conflict scenario)."""
+
+    def __init__(self, order_confirmation: bool = True):
+        self.order_confirmation = order_confirmation
 
     def grade(self, candidate: Candidate) -> tuple[int, str | None]:
         if candidate.capability == "http_call":
@@ -31,8 +38,10 @@ class ScriptedUser:
             return 1, None
 
         if method == "POST" and ORDERS_PATH in url:
-            if not candidate.needs_confirmation:
+            if self.order_confirmation and not candidate.needs_confirmation:
                 return -1, "always require confirmation before POSTing to /orders"
+            if not self.order_confirmation and candidate.needs_confirmation:
+                return -1, "don't ask me to confirm before POSTing to /orders"
             return 1, None
 
         return 0, None
