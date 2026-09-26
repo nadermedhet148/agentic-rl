@@ -215,6 +215,7 @@ you actually have, they cross-link to each other where they overlap.
 | [docs/TESTING.md](docs/TESTING.md) | Worked `curl` examples for every case the system handles, run against a live instance |
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Optional Langfuse tracing — what gets traced and how to turn it on |
 | [docs/MEMORY-PLAN.md](docs/MEMORY-PLAN.md) | The standing-rules ("semantic memory") design |
+| [docs/MULTI-AGENT-PLAN.md](docs/MULTI-AGENT-PLAN.md) | Plan for multiple specialist agents that learn from each other — pooled bandit stats, shared rules, trust, routing, delegation |
 
 ## Running the tests
 
