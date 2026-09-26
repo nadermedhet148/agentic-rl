@@ -186,6 +186,34 @@ JS, no build step) has five panels:
 The mode shown next to the title in the header is `AGENTIC_RL_MODE`
 (`sim`/`dev`/`prod_strict`) — it's read-only in the UI, set via `.env`.
 
+## Multiple agents that learn from each other
+
+Point `AGENTIC_RL_AGENTS_FILE` at a JSON list of agent profiles (see
+[`agents.example.json`](agents.example.json): a researcher, an integrator and an
+analyst) and the one agent becomes a **team of specialists**. Each one has its own
+persona, its own slice of the capabilities and its own bandit. Without the file,
+nothing changes: it's the single agent described above.
+
+- **Routing.** A request with no agent named goes to whichever agent the router
+  picks. The router is a bandit over agents that learns from the same 👍/👎.
+  The chat box also lets you pick an agent explicitly.
+- **Learning from each other.** Each agent scores actions with its own bandit
+  evidence plus its peers', weighted by **learned trust**: how well a peer's model
+  predicts the rewards *this* agent actually gets. Peers that agree are trusted
+  fully. A peer whose user wants the opposite loses trust on exactly those
+  actions. Peers' corrections and approved episodes also reach the planner.
+- **Shared rules, carefully.** A correction becomes a rule private to the agent
+  that got it. It's shared team-wide once a second agent's feedback independently
+  agrees. A rule that skips a confirmation is never shared automatically; the
+  **Share** button in the Rules panel is the only way.
+- **Delegation.** An agent can hand a sub-task to a better-suited peer
+  (`delegate`). The peer's own confirm gate still applies. If it pauses, the
+  delegating episode pauses too, and one **Confirm** resumes both.
+
+The **Team** panel shows each agent, its capabilities and reward, plus the trust
+matrix between agents. See [docs/MULTI-AGENT-PLAN.md](docs/MULTI-AGENT-PLAN.md)
+for the design and the simulator results that back it.
+
 ## Capabilities
 
 See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) for the full writeup
@@ -199,6 +227,7 @@ See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) for the full writeup
 | `run_code` | write, always confirmed | runs a Python snippet for computation/data reshaping — sandboxed in Docker (`--network none`) when Docker is installed, else a plain subprocess fallback |
 | `generate_report` | write | renders text content as a PDF, served at `/reports/<filename>` |
 | `answer` | read | the terminal step — the agent's own "I'm done, here's the reply" signal |
+| `delegate` | read (the peer's own gates apply) | team mode only: hand a sub-task to a peer agent and use its answer |
 
 ## Learn more
 
@@ -222,4 +251,7 @@ you actually have, they cross-link to each other where they overlap.
 ```bash
 .venv\Scripts\python -m pytest                 # unit tests — no network, no API key
 .venv\Scripts\python -m agentic_rl.sim.run --policy linucb --episodes 300   # learning-curve simulator
+.venv\Scripts\python -m agentic_rl.sim.run --scenario transfer --episodes 60   # multi-agent: sharing on vs off
+.venv\Scripts\python -m agentic_rl.sim.run --scenario conflict --episodes 150  # multi-agent: users who disagree
+.venv\Scripts\python -m agentic_rl.sim.run --scenario routing --episodes 300   # multi-agent: router accuracy
 ```

@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>agentic-rl</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root {
     color-scheme: light dark;
@@ -166,6 +166,20 @@
     border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600; white-space: nowrap;
   }
   #rule-form { display: flex; gap: 8px; }
+  select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; max-width: 40%;
+  }
+  .agent-badge {
+    background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok);
+    border-radius: 999px; padding: 0 6px; font-size: 10px; font-weight: 600; white-space: nowrap;
+  }
+  .rule-item .badge.private { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
+  .rule-item .badge.warn { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+  .delegation-note { color: var(--muted); font-size: 12px; margin: 4px 0; }
+  .trust-cell { text-align: center; font-variant-numeric: tabular-nums; border-radius: 4px; }
+  .caps { color: var(--muted); }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -183,6 +197,9 @@
     </div>
     <div id="chat-log"></div>
     <form id="chat-form">
+      <select id="agent-select" title="Which agent handles this request" hidden>
+        <option value="">Auto (router)</option>
+      </select>
       <input type="text" id="chat-input" placeholder="e.g. fetch https://httpbin.org/json" autocomplete="off" />
       <button type="submit">Send</button>
     </form>
@@ -196,6 +213,16 @@
         <div><b id="stat-n">–</b><span>episodes counted</span></div>
       </div>
       <canvas id="reward-chart" height="120"></canvas>
+    </section>
+
+    <section class="panel" id="team-panel" hidden>
+      <h2>Team</h2>
+      <table id="agents-table">
+        <thead><tr><th>Agent</th><th>Capabilities</th><th>Episodes</th><th>Mean reward</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h2>Trust (row trusts column)</h2>
+      <table id="trust-table"><thead></thead><tbody></tbody></table>
     </section>
 
     <section class="panel">
@@ -219,7 +246,7 @@
     <section class="panel">
       <h2>Episodes</h2>
       <table id="episodes-table">
-        <thead><tr><th>Request</th><th>Status</th><th>Steps</th><th>Reward</th></tr></thead>
+        <thead><tr><th>Request</th><th class="team-only" hidden>Agent</th><th>Status</th><th>Steps</th><th>Reward</th></tr></thead>
         <tbody></tbody>
       </table>
       <button class="secondary refresh" onclick="refreshAll()">Refresh</button>
@@ -235,6 +262,9 @@ const sessionToggleBtn = document.getElementById("session-toggle-btn");
 const sessionStatus = document.getElementById("session-status");
 
 let chart = null;
+let agents = [];  // from GET /agents; more than one = team mode (docs/MULTI-AGENT-PLAN.md)
+const agentSelect = document.getElementById("agent-select");
+function isTeam() { return agents.length > 1; }
 let currentSessionId = null;
 let currentSessionTurns = 0;
 
@@ -322,6 +352,7 @@ const CAPABILITY_ICON = {
   http_call: "🔗",
   schedule_task: "⏰",
   answer: "💬",
+  delegate: "🤝",
 };
 
 function capabilityIcon(capability) {
@@ -367,8 +398,19 @@ function renderStep(step, isLatest) {
         ${candidatesHtml}
       </details>
       ${isAnswer ? "" : `<pre class="params">${escapeHtml(JSON.stringify(candidate.params, null, 2))}</pre>`}
+      ${renderDelegationNote(step)}
       ${isAnswer ? "" : renderOutcome(step.outcome)}
     </div>`;
+}
+
+function renderDelegationNote(step) {
+  if (step.action.candidate.capability !== "delegate" || !step.child_episode_id) return "";
+  const peer = escapeHtml(step.action.candidate.params.agent_id || "peer");
+  const child = escapeHtml(step.child_episode_id.slice(0, 8));
+  if (!step.outcome) {
+    return `<div class="delegation-note">⏳ waiting on <b>${peer}</b> (episode ${child}), which paused for confirmation — confirming here confirms its step.</div>`;
+  }
+  return `<div class="delegation-note">handed to <b>${peer}</b> as episode ${child}</div>`;
 }
 
 function renderPlanningPlaceholder(nextIndex) {
@@ -414,6 +456,9 @@ function renderEpisodeCard(episode) {
     : "";
 
   const sessionBadge = episode.session_id ? `<span class="session-badge">🔗 session</span>` : "";
+  const agentBadge = isTeam() && episode.agent_id
+    ? `<span class="agent-badge" title="${episode.routed ? "picked by the router" : "picked by you"}">🤖 ${escapeHtml(episode.agent_id)}${episode.routed ? " · routed" : ""}</span>`
+    : "";
 
   div.innerHTML = `
     <div class="meta">
@@ -422,6 +467,7 @@ function renderEpisodeCard(episode) {
       &nbsp;${path}
       &nbsp;reward: <b>${rewardText}</b>
       &nbsp;${sessionBadge}
+      &nbsp;${agentBadge}
     </div>
     ${timeline}
     ${answerHtml}
@@ -585,7 +631,8 @@ chatForm.addEventListener("submit", async (e) => {
   chatLog.scrollTop = chatLog.scrollHeight;
 
   try {
-    await consumeSse("/chat/stream", { message, session_id: currentSessionId }, (name, data) => {
+    const agentId = isTeam() && agentSelect.value ? agentSelect.value : null;
+    await consumeSse("/chat/stream", { message, session_id: currentSessionId, agent_id: agentId }, (name, data) => {
       if (name === "step") applyStepEvent(local, data);
       else if (name === "done") {
         Object.assign(local, data);
@@ -623,22 +670,79 @@ async function loadMetrics() {
   document.getElementById("stat-mean").textContent = metrics.mean_reward != null ? metrics.mean_reward.toFixed(3) : "–";
 
   const ctx = document.getElementById("reward-chart");
-  const labels = metrics.rewards.map((_, i) => i + 1);
+  const datasets = [{ label: "all", data: metrics.rewards, borderColor: "#5b8cff", tension: 0.25, pointRadius: 0 }];
+  if (isTeam()) {
+    // one line per agent, each over its own episode index
+    const perAgent = await Promise.all(agents.map((a) => api(`/agents/${encodeURIComponent(a.id)}/metrics?n=100`)));
+    perAgent.forEach((m, i) => datasets.push({
+      label: m.agent_id, data: m.rewards, borderColor: AGENT_COLORS[i % AGENT_COLORS.length],
+      tension: 0.25, pointRadius: 0, borderWidth: 1.5,
+    }));
+  }
+  const length = Math.max(...datasets.map((d) => d.data.length));
+  const labels = Array.from({ length }, (_, i) => i + 1);
   if (chart) {
     chart.data.labels = labels;
-    chart.data.datasets[0].data = metrics.rewards;
+    chart.data.datasets = datasets;
+    chart.options.plugins.legend.display = isTeam();
     chart.update();
   } else {
     chart = new Chart(ctx, {
       type: "line",
-      data: { labels, datasets: [{ label: "reward", data: metrics.rewards, borderColor: "#5b8cff", tension: 0.25, pointRadius: 0 }] },
+      data: { labels, datasets },
       options: {
         responsive: true,
         scales: { y: { suggestedMin: -1, suggestedMax: 1 } },
-        plugins: { legend: { display: false } },
+        plugins: { legend: { display: isTeam() } },
       },
     });
   }
+}
+
+const AGENT_COLORS = ["#3ecf8e", "#e0a84a", "#ef5b5b", "#b07cff", "#4cc9f0"];
+
+async function loadAgents() {
+  agents = await api("/agents");
+  const team = isTeam();
+  agentSelect.hidden = !team;
+  document.getElementById("team-panel").hidden = !team;
+  document.querySelectorAll(".team-only").forEach((el) => { el.hidden = !team; });
+  if (!team) return;
+
+  const selected = agentSelect.value;
+  agentSelect.innerHTML = `<option value="">Auto (router)</option>` + agents
+    .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name || a.id)}${a.role ? " — " + escapeHtml(a.role) : ""}</option>`)
+    .join("");
+  agentSelect.value = selected;
+
+  const tbody = document.querySelector("#agents-table tbody");
+  tbody.innerHTML = agents.map((a) => `
+    <tr>
+      <td><b>${escapeHtml(a.id)}</b>${a.role ? `<div class="caps">${escapeHtml(a.role)}</div>` : ""}</td>
+      <td class="caps">${a.available_capabilities.map((c) => `${capabilityIcon(c)} ${escapeHtml(c)}`).join("<br>")}</td>
+      <td>${a.recent_episodes}</td>
+      <td>${a.mean_reward != null ? a.mean_reward.toFixed(2) : "–"}</td>
+    </tr>`).join("");
+  await loadTrust();
+}
+
+async function loadTrust() {
+  const rows = await api("/agents/trust");
+  const ids = agents.map((a) => a.id);
+  const cell = {};
+  for (const r of rows) cell[`${r.agent_id}|${r.peer_id}`] = r;
+  document.querySelector("#trust-table thead").innerHTML =
+    `<tr><th></th>${ids.map((id) => `<th>${escapeHtml(id)}</th>`).join("")}</tr>`;
+  document.querySelector("#trust-table tbody").innerHTML = ids.map((row) => `
+    <tr><th>${escapeHtml(row)}</th>${ids.map((col) => {
+      if (row === col) return `<td class="trust-cell">–</td>`;
+      const r = cell[`${row}|${col}`];
+      if (!r) return `<td class="trust-cell">?</td>`;
+      if (!r.sharing) return `<td class="trust-cell" title="sharing off">off</td>`;
+      const pct = Math.round(r.trust * 100);
+      return `<td class="trust-cell" style="background: color-mix(in srgb, var(--ok) ${pct}%, color-mix(in srgb, var(--bad) 35%, transparent))"
+        title="${r.observations} observations">${r.trust.toFixed(2)}</td>`;
+    }).join("")}</tr>`).join("");
 }
 
 async function loadRules() {
@@ -652,10 +756,25 @@ async function loadRules() {
   for (const rule of rules) {
     const row = document.createElement("div");
     row.className = "rule-item";
+    const scopeBadge = !isTeam() ? "" : rule.scope === "team"
+      ? `<span class="badge" title="shared with every agent">team</span>`
+      : `<span class="badge private" title="only ${escapeHtml(rule.owner_agent_id)} sees this">private · ${escapeHtml(rule.owner_agent_id)}</span>`;
+    const safetyBadge = rule.loosens_safety
+      ? `<span class="badge warn" title="skips a confirmation — never shared automatically">⚠ loosens safety</span>`
+      : "";
     row.innerHTML = `
       <span class="rule-text">${escapeHtml(rule.text)}</span>
+      ${scopeBadge}
+      ${safetyBadge}
       <span class="badge">seen ×${rule.support_count}</span>
     `;
+    if (isTeam()) {
+      const promote = rule.scope === "private";
+      row.appendChild(button(promote ? "Share" : "Unshare", "secondary", async () => {
+        await api(`/memories/${rule.id}/${promote ? "promote" : "demote"}`, { method: "POST" });
+        loadRules();
+      }));
+    }
     const removeBtn = button("✕", "secondary", async () => {
       await api(`/memories/${rule.id}`, { method: "DELETE" });
       loadRules();
@@ -705,14 +824,15 @@ async function loadEpisodes() {
   const tbody = document.querySelector("#episodes-table tbody");
   tbody.innerHTML = "";
   if (episodes.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty">No episodes yet</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">No episodes yet</td></tr>`;
     return;
   }
   for (const ep of episodes) {
     const reward = ep.final_reward != null ? ep.final_reward.toFixed(2) : ep.implicit_reward.toFixed(2);
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td title="${escapeHtml(ep.state.request)}">${escapeHtml(ep.state.request.slice(0, 40))}</td>
+      <td title="${escapeHtml(ep.state.request)}">${ep.parent_episode_id ? "↳ " : ""}${escapeHtml(ep.state.request.slice(0, 40))}</td>
+      ${isTeam() ? `<td>${escapeHtml(ep.agent_id)}${ep.routed ? " <span class=\"caps\">(routed)</span>" : ""}</td>` : ""}
       <td><span class="status ${ep.status}">${ep.status.replace("_", " ")}</span></td>
       <td>${(ep.steps || []).length}</td>
       <td>${reward}</td>
@@ -722,10 +842,12 @@ async function loadEpisodes() {
 }
 
 async function refreshEpisodesAndMetrics() {
+  await loadAgents();
   await Promise.all([loadMetrics(), loadEpisodes(), loadTasks(), loadRules()]);
 }
 
 async function refreshAll() {
+  await loadAgents();  // first: everything else renders differently in team mode
   await Promise.all([loadHealth(), loadMetrics(), loadTasks(), loadEpisodes(), loadRules()]);
 }
 

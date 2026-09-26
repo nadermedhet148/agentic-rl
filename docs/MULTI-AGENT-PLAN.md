@@ -158,35 +158,47 @@ genuinely differ.
 
 ### 4. Trust: learning *whom* to learn from
 
-`w_ij` is estimated online, per ordered pair (and optionally per capability). After
-agent *i* receives a reward `r` on arm `a`, compare that with the prediction *j*'s
-model alone would have made for `a` on the same features (`θ_jᵀx`). Peers whose
-predictions track *i*'s actual rewards earn trust. Peers that mislead lose it:
+`w_ij` is estimated online, per ordered pair **and per arm**, with a pair-level
+estimate as the fallback for arms with too few observations. After agent *i*
+receives a reward `r` on arm `a`, compare that with the prediction *j*'s model
+alone would have made for `a` on the same features (`θ_jᵀx`), and with *i*'s own
+out-of-sample prediction. Peers whose predictions track *i*'s actual rewards earn
+trust. Peers that mislead lose it:
 
 ```
-err_ij ← (1 − β)·err_ij + β·(r − θ_jᵀx)²        # EMA of j's prediction error on i's data
-w_ij    = clip(1 − err_ij / err_i_self, 0, 1)   # relative to i's own model's error
+err_peer ← EMA_β of (r − θ_jᵀx)²     # j's prediction error on i's rewards
+err_self ← EMA_β of (r − θ_iᵀx)²     # i's own error, before it updates on r
+w_ij     = clip(((err_self + ε) / (err_peer + ε))², 0, 1)
 ```
 
-Trust starts at a configurable prior (`agent_trust_prior`, default 0.5) and is
-stored in an `agent_trust` table so it survives restarts and is visible in the UI.
+A peer that predicts *i*'s rewards as well as *i* itself gets 1. The fall-off is
+squared because a peer usually has far more evidence on an arm than *i* does, and a
+linear fall-off left enough of a conflicting peer's weight to outvote *i*'s own
+early evidence. This was tuned on the conflict scenario (see Results).
+
+Trust starts at a configurable prior (`trust_prior`, default 0.5) until there are
+`trust_min_obs` (default 2) observations. It's stored in an `agent_trust` table so
+it survives restarts and is visible in the UI.
 The same weights gate channels 2 and 3 (peer rules and peer corrections are ranked
 by owner trust), so one number per pair drives all sharing.
 
 ### Routing and delegation
 
-- **Router** (`core/team.py`): when `/chat` arrives without an `agent_id`, a bandit
-  picks the agent. Arms are agent ids, and context is the same request features plus
-  an intent label. It learns from the *same* episode feedback, so if the analyst
+- **Router** (`core/router.py`): when `/chat` arrives without an `agent_id`, a bandit
+  picks the agent. Arms are agent ids, and context is a hashed bag of the request's
+  tokens and hosts. It learns from the *same* episode feedback, so if the analyst
   keeps getting 👎 on "fetch …" requests, those drift to the integrator. It reuses
-  `LinUCBPolicy` unchanged, just with a different arm-id/feature builder. An explicit
-  `agent_id` bypasses it.
+  `LinUCBPolicy` unchanged, plus a capability-cue prior ("this request mentions a
+  URL, and this agent has `http_call`") that fades as real feedback accumulates, so
+  routing is sensible from the first request. An explicit `agent_id` bypasses it.
 - **Delegation** (`capabilities/delegate.py`): a new capability,
   `delegate(agent_id, request)`. It runs a peer's `Agent.run` as a child episode
-  (`parent_episode_id`) and returns its answer as the outcome payload. The tier is
-  the *maximum* tier the child actually used. If the child hits a confirm gate, the
-  parent pauses too, so delegation can't launder a write past confirmation. Depth is
-  capped (`max_delegation_depth`, default 1) to avoid ping-pong.
+  (`parent_episode_id`) and returns its answer as the outcome payload. Delegating
+  itself is read-tier, because everything the child does goes through the *child's*
+  own confirm gate. If the child pauses there, the parent pauses too, so delegation
+  can't launder a write past confirmation. Confirming the parent confirms the
+  child, and the child's completion resumes the parent. Depth is capped
+  (`max_delegation_depth`, default 1) to avoid ping-pong.
 - **Credit assignment:** feedback on the parent updates the parent's arms (including
   the `delegate:<peer>` arm, so agents *learn whom to ask*). It also propagates to
   the child episode at a discount (`delegation_credit`, default 0.5), so the peer
@@ -213,29 +225,30 @@ by owner trust), so one number per pair drives all sharing.
 - **Acceptance:** the whole existing test suite passes unchanged with one implicit
   `default` agent.
 
-### 1. Multiple agents + Team + Router
+### 1. Multiple agents + Team + Router ✅ done
 
 - `core/team.py`: `Team(agents: dict[str, Agent], router: Policy, hub: KnowledgeHub)`
   with `run(request, agent_id=None, …)`, `confirm`, `record_feedback`. It delegates
   to the owning agent, found via `episode.agent_id`.
 - `llm/prompts.py`: the persona is prepended to the system prompt.
-- `core/config.py`: `agents_file: Path | None`. This is a YAML/JSON list of
-  profiles. When unset, a single `default` agent keeps today's setup.
+- `core/config.py`: `agents_file: Path | None`. This is a JSON list of profiles
+  (see `agents.example.json`). When unset, a single `default` agent keeps today's setup.
 - `api/app.py`: build the `Team` instead of a single `Agent`. `app.state.agent` stays
   as the default agent for back-compat.
 - `api/routes.py`: optional `agent_id` on `/chat`, `/chat/stream`; `GET /agents`,
   `GET /agents/{id}/metrics`; `agent_id` filter on `/episodes`, `/memories`.
 
-### 2. Procedural sharing (the core experiment)
+### 2. Procedural sharing (the core experiment) ✅ done
 
 - `core/hub.py`: `KnowledgeHub` holds references to every agent's policy and the
   trust table. `refresh(agent_id)` computes peer evidence and calls
-  `set_peer_evidence`. It's triggered after any agent's `policy.update`.
+  `set_peer_evidence`. It runs lazily just before an agent selects, and is a
+  no-op unless some agent's evidence or trust changed since its last refresh.
 - `policy/linucb.py`, `policy/epsilon.py`: `evidence()` /
   `set_peer_evidence()`, plus an effective-model cache.
 - Trust starts at a fixed prior. Learned trust comes in phase 4.
 
-### 3. Semantic + episodic sharing
+### 3. Semantic + episodic sharing ✅ done
 
 - `Consolidator`: cross-agent match search, per-agent support, the promotion rule,
   and the safety filter (a small, explicitly tested classifier for "loosens
@@ -246,19 +259,19 @@ by owner trust), so one number per pair drives all sharing.
 - `Planner.plan(…, demonstrations: list[str] | None = None)` → `render_demonstrations`.
 - `POST /memories/{id}/promote`, `POST /memories/{id}/demote`.
 
-### 4. Learned trust
+### 4. Learned trust ✅ done
 
 - `core/hub.py`: trust EMA update inside `record_feedback` / `_finalize_step`, then
   persisted to `agent_trust`.
 - `GET /agents/trust` returns the matrix for the UI.
 
-### 5. Delegation
+### 5. Delegation ✅ done
 
 - `capabilities/delegate.py`, `Episode.parent_episode_id`, discounted credit
   propagation in `Team.record_feedback`, the confirm-gate pass-through, and the
   depth cap.
 
-### 6. UI
+### 6. UI ✅ done
 
 - An agent selector (or "auto") in the chat box. The episode list shows the agent
   and any delegation chain. The memories panel shows scope/owner with a promote
@@ -275,11 +288,14 @@ clean bad/good learning signal in seconds without an LLM.
    requests. Metric: B's mean reward over its first 50 episodes with sharing
    `w = prior` vs `w = 0`. **Expectation:** with sharing, B starts near A's final
    reward instead of at the greedy baseline.
-2. **No negative transfer.** Two agents whose scripted users *disagree* (e.g.
-   `PREFERRED_TIMEZONE` Berlin vs Tokyo, a new `ScriptedUser(preferences=…)`
-   parameter). **Expectation:** learned trust on `schedule_task` arms drops toward 0
-   and both agents converge to *their own* user's preference. Their final reward
-   isn't worse than the `w = 0` control's.
+2. **No negative transfer.** Two agents whose scripted users *disagree*: one user
+   wants to confirm orders, the other finds that annoying
+   (`ScriptedUser(order_confirmation=False)`). Timezone was the first idea, but a
+   timezone *value* isn't part of an arm's identity (only its param shape is), so
+   the bandit can't tell Berlin from Tokyo; that preference is the rules' job.
+   **Expectation:** learned trust drops toward 0 on the order arms, stays high on
+   the arms they agree on, and both agents converge to *their own* user's
+   preference. Their final reward isn't worse than the `w = 0` control's.
 3. **Rule promotion.** Both agents get the same correction once. **Expectation:**
    one `team` rule with per-agent support {A:1, B:1}, not two private duplicates. A
    rule that removes a confirmation stays private.
@@ -290,9 +306,26 @@ clean bad/good learning signal in seconds without an LLM.
    write-tier. **Expectation:** the parent episode ends in `pending_confirmation`,
    never auto-executes.
 
-`python -m agentic_rl.sim.run --agents 2 --share {on,off} --scenario
-{transfer,conflict}` prints both curves side by side. The tests assert the
-inequalities above on fixed seeds, the same approach as tests/test_learning.py.
+`python -m agentic_rl.sim.run --scenario {transfer,conflict,routing} --share
+{on,off,both}` prints the curves (sim/team.py). tests/test_team.py asserts every
+expectation above, the same approach as tests/test_learning.py.
+
+### Results
+
+From `sim/team.py` with the mock planner (deterministic):
+
+| Scenario | Sharing on | Sharing off |
+|---|---|---|
+| Transfer: fresh agent `b`, mean reward over its first 15 episodes | **1.00** | 0.73 |
+| Conflict: mean reward over first 30 rounds, `a` / `b` | 0.80 / 0.87 | 0.87 / 0.80 |
+| Conflict: mean reward over last 30 rounds, `a` / `b` | **1.00 / 1.00** | 1.00 / 1.00 |
+| Conflict: learned trust `b → a` on the order-confirm arm / on the data arm | < 0.2 / > 0.8 | n/a |
+| Routing: router pick accuracy, first 100 → last 100 episodes (cue prior off) | 0.97 → 1.00 | n/a |
+
+With a linear trust curve, the conflict scenario's early rounds cost `b` about 0.4
+(0.40 vs 0.80). The squared curve brings the early rounds to parity, with the two
+agents' combined early reward matching the control's, while keeping the full
+transfer benefit.
 
 ## Rollout order and scope
 

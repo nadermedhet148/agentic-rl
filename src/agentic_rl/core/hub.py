@@ -36,6 +36,7 @@ class _Member:
     policy: Policy
     share: bool
     synced_epoch: int = -1
+    evidence: dict[str, Any] | None = None  # cached Policy.evidence(); None = stale
 
 
 class KnowledgeHub:
@@ -184,7 +185,18 @@ class KnowledgeHub:
 
     def mark_updated(self, agent_id: str) -> None:
         """An agent's local evidence changed — peers re-pool on their next refresh."""
+        member = self._members.get(agent_id)
+        if member is not None:
+            member.evidence = None
         self._epoch += 1
+
+    def _evidence(self, agent_id: str) -> dict[str, Any]:
+        """A peer's evidence, serialized once per change rather than once per refresh
+        (trust moves on every observation, evidence only when that peer learns)."""
+        member = self._members[agent_id]
+        if member.evidence is None:
+            member.evidence = member.policy.evidence()
+        return member.evidence
 
     def refresh(self, agent_id: str) -> None:
         """Hand `agent_id`'s policy the current trust-weighted evidence of its peers.
@@ -195,7 +207,7 @@ class KnowledgeHub:
         peers = [
             PeerEvidence(
                 agent_id=peer_id,
-                evidence=self._members[peer_id].policy.evidence(),
+                evidence=self._evidence(peer_id),
                 weight=lambda arm_id, peer_id=peer_id: self.trust(agent_id, peer_id, arm_id),
             )
             for peer_id in self._peers(agent_id)
