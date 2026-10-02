@@ -1,0 +1,685 @@
+<title>Agentic-RL Memory Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; a wide system diagram up top, then one section per store,
+   each with a live walkthrough that steps through the real code path. */
+:root {
+  --bg: #EEF1EE;
+  --surface: #FFFFFF;
+  --ink: #18211E;
+  --muted: #56635D;
+  --line: #C6CFCA;
+  --rules: #A85F0A;      --rules-tint: #F6E8D3;
+  --epi: #2F5FA7;        --epi-tint: #DCE6F5;
+  --ses: #87397A;        --ses-tint: #F2DFEE;
+  --good: #2E7D4F;       --bad: #B23A3A;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111614; --surface: #19201D; --ink: #E3E9E5; --muted: #9AA7A0; --line: #2E3833;
+    --rules: #E3A04C; --rules-tint: #33261A;
+    --epi: #86AAE8;   --epi-tint: #1B2638;
+    --ses: #D68DC9;   --ses-tint: #2F1E2C;
+    --good: #6CC791;  --bad: #EE8080;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111614; --surface: #19201D; --ink: #E3E9E5; --muted: #9AA7A0; --line: #2E3833;
+  --rules: #E3A04C; --rules-tint: #33261A;
+  --epi: #86AAE8;   --epi-tint: #1B2638;
+  --ses: #D68DC9;   --ses-tint: #2F1E2C;
+  --good: #6CC791;  --bad: #EE8080;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.6;
+}
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 48px 80px; }
+.col { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.12; margin: 0; }
+h1 { font-size: clamp(2.2rem, 5vw, 3.5rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.6rem, 3.2vw, 2.2rem); font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.15rem; font-weight: 500; }
+p { margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--muted);
+}
+.lede { font-size: 1.15rem; color: var(--muted); }
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.stack-lg { display: flex; flex-direction: column; gap: 28px; }
+section { padding-block: 56px 0; display: flex; flex-direction: column; gap: 28px; }
+header.hero { display: flex; flex-direction: column; gap: 18px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 10px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 999px;
+  font-size: 0.85rem; font-weight: 500; border: 1px solid transparent;
+}
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.c-rules { color: var(--rules); background: var(--rules-tint); }
+.c-epi { color: var(--epi); background: var(--epi-tint); }
+.c-ses { color: var(--ses); background: var(--ses-tint); }
+.c-proc { color: var(--muted); background: var(--surface); border-color: var(--line); }
+
+/* diagram */
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 720px; height: auto; }
+.d-box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.d-rules { fill: var(--rules-tint); stroke: var(--rules); }
+.d-epi { fill: var(--epi-tint); stroke: var(--epi); }
+.d-ses { fill: var(--ses-tint); stroke: var(--ses); }
+.d-title { font-family: var(--font-display); font-size: 17px; font-weight: 700; fill: var(--ink); }
+.d-text { font-family: var(--font-body); font-size: 13px; fill: var(--ink); }
+.d-sub { font-family: var(--font-mono); font-size: 11.5px; fill: var(--muted); }
+.d-lbl { font-family: var(--font-mono); font-size: 11px; fill: var(--muted); }
+.d-read { stroke: var(--ink); stroke-width: 1.5; fill: none; }
+.d-write { stroke: var(--muted); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+.t-rules { fill: var(--rules); } .t-epi { fill: var(--epi); } .t-ses { fill: var(--ses); }
+.diagram-key { display: flex; flex-wrap: wrap; gap: 20px; font-size: 0.85rem; color: var(--muted); padding-top: 10px; }
+.diagram-key span { display: inline-flex; align-items: center; gap: 8px; }
+.diagram-key svg { min-width: 0; width: 34px; }
+
+/* section heads */
+.sec-head { display: flex; flex-direction: column; gap: 10px; }
+.sec-num { font-family: var(--font-mono); font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; }
+.sec-rules .sec-num { color: var(--rules); }
+.sec-epi .sec-num { color: var(--epi); }
+.sec-ses .sec-num { color: var(--ses); }
+.sec-prompt .sec-num { color: var(--muted); }
+
+/* pipeline (real sequences only) */
+.pipe { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; counter-reset: p; }
+.pipe li {
+  counter-increment: p; background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0;
+}
+.pipe li::before { content: "step " counter(p); font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; }
+.pipe b { font-weight: 600; }
+.pipe p { font-size: 0.92rem; color: var(--muted); }
+
+/* demo panels */
+.demo { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+.demo-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 12px; }
+.demo-head h3 { font-family: var(--font-display); }
+label.f { display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; color: var(--muted); }
+input[type="text"] {
+  font: inherit; font-family: var(--font-mono); font-size: 0.92rem; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%;
+}
+input[type="text"]:focus-visible, button:focus-visible { outline: 2px solid var(--epi); outline-offset: 2px; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button {
+  font: inherit; font-size: 0.9rem; font-weight: 500; cursor: pointer; border-radius: 8px;
+  padding: 8px 14px; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+}
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.ghost { background: transparent; }
+
+.tokens { display: flex; flex-wrap: wrap; gap: 6px; }
+.tok { font-family: var(--font-mono); font-size: 0.8rem; padding: 2px 8px; border-radius: 6px; background: var(--epi-tint); color: var(--epi); }
+.tok.stop { background: transparent; color: var(--muted); text-decoration: line-through; border: 1px dashed var(--line); }
+.tok.host { background: var(--epi); color: var(--surface); }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 0.9rem; align-items: baseline; }
+.kv dt { color: var(--muted); font-family: var(--font-mono); font-size: 0.8rem; }
+.kv dd { margin: 0; min-width: 0; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; min-width: 560px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--font-mono); font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.pill { display: inline-block; font-family: var(--font-mono); font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.ok { color: var(--good); border: 1px solid var(--good); }
+.pill.no { color: var(--bad); border: 1px solid var(--bad); }
+.pill.off { color: var(--muted); border: 1px solid var(--line); }
+.pill.rules { color: var(--rules); border: 1px solid var(--rules); }
+.pill.ses { color: var(--ses); border: 1px solid var(--ses); }
+tr.dim td { color: var(--muted); }
+tr.dim td .txt { text-decoration: line-through; }
+tr.flash td { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: var(--rules-tint); } to { background: transparent; } }
+
+.note { font-size: 0.88rem; color: var(--muted); }
+.callout {
+  border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--bg);
+  display: flex; flex-direction: column; gap: 6px; font-size: 0.93rem;
+}
+.callout .eyebrow { color: var(--ink); }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+.two > * { min-width: 0; }
+
+pre.prompt {
+  margin: 0; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; color: var(--ink);
+  max-height: 420px; overflow: auto;
+}
+pre.prompt .h-rules { color: var(--rules); font-weight: 500; }
+pre.prompt .h-epi { color: var(--epi); font-weight: 500; }
+pre.prompt .h-ses { color: var(--ses); font-weight: 500; }
+pre.prompt .h-mut { color: var(--muted); }
+
+.turns { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.turns li { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; grid-template-columns: 2.2em 1fr auto; gap: 10px; align-items: start; font-size: 0.88rem; }
+.turns li.folded { background: var(--ses-tint); border-color: transparent; }
+.turns li .n { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.turns li .q { font-weight: 500; }
+.turns li .a { color: var(--muted); }
+.turns li > div { min-width: 0; }
+.counter { display: flex; flex-wrap: wrap; gap: 10px; }
+.counter div { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; min-width: 9.5em; }
+.counter b { display: block; font-family: var(--font-display); font-size: 1.5rem; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.counter span { font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); }
+.status-line { font-size: 0.9rem; min-height: 1.6em; }
+
+.order { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; counter-reset: o; }
+.order li { counter-increment: o; display: grid; grid-template-columns: 2em 1fr; gap: 12px; align-items: baseline; }
+.order li::before { content: counter(o); font-family: var(--font-display); font-weight: 700; font-size: 1.3rem; color: var(--muted); }
+.order li div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.files { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.files div { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 2px; font-size: 0.88rem; }
+.files code { color: var(--ink); }
+.files span { color: var(--muted); }
+footer { padding-top: 56px; }
+
+@media (prefers-reduced-motion: reduce) { tr.flash td { animation: none; } }
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">agentic-rl · memory</span>
+  <h1>How the agent remembers</h1>
+  <p class="lede col">Before every planning step, the agent pulls three kinds of memory into the planner's prompt. Two of them are filled by your feedback, and one is filled by the conversation itself. Everything lives in one SQLite file.</p>
+  <div class="legend" aria-label="Memory tiers">
+    <span class="chip c-rules"><span class="dot"></span>Semantic · standing rules</span>
+    <span class="chip c-epi"><span class="dot"></span>Episodic · past corrections</span>
+    <span class="chip c-ses"><span class="dot"></span>Conversation · session store</span>
+    <span class="chip c-proc"><span class="dot"></span>Procedural · bandit weights</span>
+  </div>
+</header>
+
+<section aria-labelledby="map-h">
+  <div class="sec-head">
+    <span class="sec-num" style="color:var(--muted)">The whole picture</span>
+    <h2 id="map-h">Read paths and write paths</h2>
+    <p class="col">Solid arrows run on every request: the agent <em>finds</em> memory and hands it to the planner. Dashed arrows run after something happens: a correction becomes a rule, and a finished turn is added to the session.</p>
+  </div>
+  <div class="diagram">
+    <svg viewBox="0 0 1000 510" role="img" aria-labelledby="svg-t svg-d">
+      <title id="svg-t">Memory read and write paths</title>
+      <desc id="svg-d">A request reads all active rules, searches past corrections, and loads the active session. All three go into the planner prompt. A correction is distilled into a rule; a finished turn updates the session and is summarized every five turns.</desc>
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" style="fill: var(--ink)"/>
+        </marker>
+        <marker id="ahm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"/>
+        </marker>
+      </defs>
+
+      <!-- write sources -->
+      <rect class="d-box" x="20" y="45" width="210" height="80" rx="10"/>
+      <text class="d-title" x="36" y="75">Correction ✏️</text>
+      <text class="d-text" x="36" y="97">feedback on a finished</text>
+      <text class="d-text" x="36" y="114">episode</text>
+
+      <rect class="d-box" x="20" y="215" width="210" height="80" rx="10"/>
+      <text class="d-title" x="36" y="245">New request</text>
+      <text class="d-text" x="36" y="267">"fetch users from</text>
+      <text class="d-text" x="36" y="284">api.example.com"</text>
+
+      <rect class="d-box" x="20" y="390" width="210" height="80" rx="10"/>
+      <text class="d-title" x="36" y="420">Turn finished</text>
+      <text class="d-text" x="36" y="442">episode answered inside</text>
+      <text class="d-text" x="36" y="459">an active session</text>
+
+      <!-- stores -->
+      <rect class="d-box d-rules" x="330" y="35" width="300" height="120" rx="12"/>
+      <text class="d-title t-rules" x="348" y="64">Standing rules</text>
+      <text class="d-sub" x="348" y="84">memories · memories_fts</text>
+      <text class="d-text" x="348" y="108">"always send Content-Type: application/</text>
+      <text class="d-text" x="348" y="125">json to httpbin.org"  ·  seen ×2</text>
+      <text class="d-sub" x="348" y="145">core/memory.py</text>
+
+      <rect class="d-box d-epi" x="330" y="195" width="300" height="120" rx="12"/>
+      <text class="d-title t-epi" x="348" y="224">Past corrections</text>
+      <text class="d-sub" x="348" y="244">episodes · episodes_fts</text>
+      <text class="d-text" x="348" y="268">request + correction + hosts,</text>
+      <text class="d-text" x="348" y="285">ranked by bm25</text>
+      <text class="d-sub" x="348" y="305">core/store.py</text>
+
+      <rect class="d-box d-ses" x="330" y="355" width="300" height="120" rx="12"/>
+      <text class="d-title t-ses" x="348" y="384">Conversation session</text>
+      <text class="d-sub" x="348" y="404">sessions</text>
+      <text class="d-text" x="348" y="428">rolling summary + turns not yet</text>
+      <text class="d-text" x="348" y="445">summarized</text>
+      <text class="d-sub" x="348" y="465">core/session.py</text>
+
+      <!-- planner prompt -->
+      <rect class="d-box" x="750" y="150" width="230" height="210" rx="12"/>
+      <text class="d-title" x="768" y="180">Planner prompt</text>
+      <text class="d-sub" x="768" y="200">llm/llm_planner.py</text>
+      <rect x="768" y="214" width="12" height="12" rx="3" style="fill: var(--ses)"/>
+      <text class="d-text" x="788" y="225">1 Conversation so far</text>
+      <rect x="768" y="240" width="12" height="12" rx="3" style="fill: var(--line)"/>
+      <text class="d-text" x="788" y="251">2 Steps completed so far</text>
+      <rect x="768" y="266" width="12" height="12" rx="3" style="fill: var(--rules)"/>
+      <text class="d-text" x="788" y="277">3 Standing rules (binding)</text>
+      <rect x="768" y="292" width="12" height="12" rx="3" style="fill: var(--epi)"/>
+      <text class="d-text" x="788" y="303">4 Corrections from similar</text>
+      <text class="d-text" x="806" y="320">past requests</text>
+
+      <!-- read paths -->
+      <path class="d-read" d="M230,240 C280,240 280,130 326,130" marker-end="url(#ah)"/>
+      <text class="d-lbl" x="236" y="182">all active</text>
+      <path class="d-read" d="M230,255 L326,255" marker-end="url(#ah)"/>
+      <text class="d-lbl" x="242" y="249">FTS search</text>
+      <path class="d-read" d="M230,270 C280,270 280,380 326,380" marker-end="url(#ah)"/>
+      <text class="d-lbl" x="236" y="338">session_id</text>
+
+      <path class="d-read" d="M630,95 C700,95 690,230 746,230" marker-end="url(#ah)"/>
+      <path class="d-read" d="M630,255 L746,255" marker-end="url(#ah)"/>
+      <path class="d-read" d="M630,415 C700,415 690,280 746,280" marker-end="url(#ah)"/>
+
+      <!-- write paths -->
+      <path class="d-write" d="M230,85 L326,85" marker-end="url(#ahm)"/>
+      <text class="d-lbl" x="242" y="78">distill</text>
+      <path class="d-write" d="M230,430 L326,430" marker-end="url(#ahm)"/>
+      <text class="d-lbl" x="240" y="423">every 5th</text>
+      <text class="d-lbl" x="240" y="449">summarize</text>
+    </svg>
+    <div class="diagram-key">
+      <span><svg viewBox="0 0 34 8" aria-hidden="true"><line x1="0" y1="4" x2="34" y2="4" class="d-read"/></svg>read on every planning step</span>
+      <span><svg viewBox="0 0 34 8" aria-hidden="true"><line x1="0" y1="4" x2="34" y2="4" class="d-write"/></svg>written after an event</span>
+    </div>
+  </div>
+  <div class="callout col">
+    <span class="eyebrow">The fourth tier</span>
+    <p>Procedural memory is the bandit's learned weights (one <code>A</code>/<code>b</code> matrix pair per arm). It never enters the prompt. It is saved to the <code>policy_state</code> table after every update and reloaded on boot, so the agent keeps what it learned across restarts.</p>
+  </div>
+</section>
+
+<!-- ───────── 1. FINDING MEMORY ───────── -->
+<section class="sec-epi" aria-labelledby="find-h">
+  <div class="sec-head">
+    <span class="sec-num">01 · Finding memory</span>
+    <h2 id="find-h">Which past corrections are "similar"?</h2>
+    <p class="col">There are no embeddings here. Retrieval is lexical: SQLite FTS5 with bm25 ranking, plus a filter in Python that FTS5 can't express on its own. The same helpers in <code>core/text.py</code> search both past corrections and existing rules.</p>
+  </div>
+
+  <ol class="pipe">
+    <li><b>Tokenize</b><p>Split on letters and digits, lowercase, drop tokens shorter than 2 characters.</p></li>
+    <li><b>Drop stopwords</b><p>Request filler like <code>fetch</code>, <code>get</code>, <code>please</code>, <code>the</code> would match everything.</p></li>
+    <li><b>FTS5 OR query</b><p>Each token is quoted and OR-ed together. This favours recall; anything sharing one token comes back.</p></li>
+    <li><b>Rank with bm25</b><p>Columns weighted <code>request 1.0</code>, <code>correction 0.5</code>, <code>hosts 3.0</code>. A shared host outranks shared words.</p></li>
+    <li><b>Min-overlap filter</b><p>Keep a row only if its request shares ≥ 2 tokens with yours (≥ 1 if your query has a single token). Top 5 go to the prompt.</p></li>
+  </ol>
+
+  <div class="demo" id="find-demo">
+    <div class="demo-head">
+      <h3>Try it: search the past corrections</h3>
+      <span class="note">Runs the tokenizer and overlap filter from <code>core/text.py</code></span>
+    </div>
+    <label class="f" for="q">Your new request
+      <input type="text" id="q" value="fetch users from https://api.example.com/users" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="btns" aria-label="Example requests">
+      <span class="note">Examples:</span>
+      <button type="button" class="ghost" data-q="fetch users from https://api.example.com/users">same host</button>
+      <button type="button" class="ghost" data-q="fetch the weather">one-word query</button>
+      <button type="button" class="ghost" data-q="open langfuse docs">one shared word</button>
+      <button type="button" class="ghost" data-q="schedule a weekly report of github stars">near-duplicate</button>
+    </div>
+    <div class="two">
+      <dl class="kv">
+        <dt>tokens</dt><dd><div class="tokens" id="q-tokens"></div></dd>
+        <dt>hosts</dt><dd><div class="tokens" id="q-hosts"></div></dd>
+        <dt>needs overlap</dt><dd id="q-need" class="mono"></dd>
+      </dl>
+      <p class="note">Crossed-out chips are stopwords, removed before the search. Note that <code>https</code> survives as a token, so two URLs always share at least that one word. That's why one shared token isn't enough to count as similar.</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Past request</th><th>Correction the user gave</th><th>Shared tokens</th><th>Result</th></tr></thead>
+        <tbody id="q-rows"></tbody>
+      </table>
+    </div>
+    <p class="note">The demo orders matches by shared host, then shared-token count, as a stand-in for SQLite's bm25 score. Matches are rendered into the prompt as <code>for a request like '…': &lt;correction&gt;</code>.</p>
+  </div>
+</section>
+
+<!-- ───────── 2. THE MEMORY ITSELF ───────── -->
+<section class="sec-rules" aria-labelledby="rules-h">
+  <div class="sec-head">
+    <span class="sec-num">02 · The memory itself</span>
+    <h2 id="rules-h">Corrections become standing rules</h2>
+    <p class="col">A raw correction only helps when a future request looks similar. So every ✏️ correction is also distilled by an LLM into one general, imperative rule. All active rules are shown to the planner on every request, whatever it asks, sorted by how often they've been confirmed.</p>
+  </div>
+
+  <div class="two">
+    <div class="stack">
+      <h3>A rule on file</h3>
+      <dl class="kv">
+        <dt>text</dt><dd>always send Content-Type: application/json to httpbin.org</dd>
+        <dt>capability</dt><dd><code>http_call</code>, or empty to apply everywhere</dd>
+        <dt>support_count</dt><dd>how many corrections said the same thing</dd>
+        <dt>source_episode_ids</dt><dd>the episodes it came from</dd>
+        <dt>superseded_by</dt><dd>the rule that replaced it, if any</dd>
+        <dt>active</dt><dd>only active rules reach the prompt</dd>
+      </dl>
+    </div>
+    <div class="stack">
+      <h3>How the Consolidator decides</h3>
+      <ol class="order">
+        <li><div><b>Gather candidates</b><span class="note">Rules whose text overlaps the correction (same FTS search), plus active rules for each capability the episode used.</span></div></li>
+        <li><div><b>Ask the Distiller</b><span class="note">It sees the request, the actions taken, the correction and the candidates with their ids. It returns a rule and, optionally, a match or supersede id.</span></div></li>
+        <li><div><b>Apply one outcome</b><span class="note">Same meaning: bump <code>support_count</code>. Opposite meaning: add the new rule and deactivate the old one. Otherwise: add a new rule.</span></div></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="demo" id="rules-demo">
+    <div class="demo-head">
+      <h3>Walk through four corrections</h3>
+      <div class="btns">
+        <button type="button" id="r-reset">Reset</button>
+        <button type="button" class="primary" id="r-next">Send correction 1</button>
+      </div>
+    </div>
+    <div class="callout" id="r-event" aria-live="polite">
+      <span class="eyebrow" id="r-event-h">Rules table is empty</span>
+      <p id="r-event-p">No correction has been given yet. The planner prompt has no standing-rules section.</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>id</th><th>Rule text</th><th>Scope</th><th>Support</th><th>State</th></tr></thead>
+        <tbody id="r-rows"><tr><td colspan="5" class="note">No rules yet. Send the first correction.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="callout col">
+    <span class="eyebrow">Why a guard on ids</span>
+    <p>An LLM can name a rule id it was never shown. The Consolidator only accepts a match or supersede id that was in the candidate list it sent. Anything else is ignored, and the correction is saved as a new rule. That way a made-up id can't bump or retire the wrong rule.</p>
+  </div>
+  <p class="note col">You can also add a rule directly with <code>POST /memories</code> (no distilling) and retire one with <code>DELETE /memories/{id}</code>. The UI shows them in the Rules panel.</p>
+</section>
+
+<!-- ───────── 3. CONVERSATION STORE ───────── -->
+<section class="sec-ses" aria-labelledby="ses-h">
+  <div class="sec-head">
+    <span class="sec-num">03 · The conversation store</span>
+    <h2 id="ses-h">Sessions remember what you just said</h2>
+    <p class="col">Rules and corrections are permanent and shared across conversations. A session is different. You start and end it yourself, and it only holds this conversation's own turns, so "now make that a PDF" knows what <em>that</em> is. To keep the prompt from growing forever, every 5 turns the oldest unsummarized turns are folded into a rolling summary.</p>
+  </div>
+
+  <div class="demo" id="ses-demo">
+    <div class="demo-head">
+      <h3>Play a session, one turn at a time</h3>
+      <div class="btns">
+        <button type="button" id="s-reset">Reset</button>
+        <button type="button" class="primary" id="s-next">Start session</button>
+      </div>
+    </div>
+    <div class="counter" aria-live="polite">
+      <div><b id="s-status">none</b><span>status</span></div>
+      <div><b id="s-count">0</b><span>turn_count</span></div>
+      <div><b id="s-through">0</b><span>summarized_through</span></div>
+      <div><b id="s-uns">0</b><span>unsummarized</span></div>
+    </div>
+    <p class="status-line" id="s-msg">No session. Each message is its own episode and the planner sees no earlier turns.</p>
+    <div class="two">
+      <div class="stack">
+        <h3>Turns in the <code>episodes</code> table</h3>
+        <ol class="turns" id="s-turns"><li><span class="n">–</span><div class="note">No turns yet.</div><span></span></li></ol>
+      </div>
+      <div class="stack">
+        <h3>What the planner sees next</h3>
+        <pre class="prompt" id="s-prompt"><span class="h-mut">(nothing: no active session)</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="callout">
+      <span class="eyebrow">The summarizer's brief</span>
+      <p>Keep concrete facts, filenames, URLs, numbers, and what was generated or scheduled. Drop filler. Stay under about 200 words, keeping the newest details when space runs out.</p>
+    </div>
+    <div class="callout">
+      <span class="eyebrow">If summarizing fails</span>
+      <p>The user already has their answer, so a summarizer error never fails the turn. <code>turn_count</code> still goes up, and the summary is retried after the next turn.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 4. PROMPT ───────── -->
+<section class="sec-prompt" aria-labelledby="prompt-h">
+  <div class="sec-head">
+    <span class="sec-num">04 · Putting it together</span>
+    <h2 id="prompt-h">The order the planner reads it in</h2>
+    <p class="col">Each section renders to nothing when it's empty, so a session-less request with no history has a much shorter prompt. Rules and corrections come last, right before the planner writes its candidates.</p>
+  </div>
+  <div class="two">
+    <ol class="order">
+      <li><div><b style="color:var(--ses)">Conversation so far in this session</b><span class="note">Summary of earlier turns, then recent turns verbatim.</span></div></li>
+      <li><div><b>Steps completed so far</b><span class="note">This episode's own plan, act and observe loop.</span></div></li>
+      <li><div><b style="color:var(--rules)">Standing rules from this user (binding, always apply)</b><span class="note">Up to 50 active rules, most supported first.</span></div></li>
+      <li><div><b style="color:var(--epi)">Corrections from past similar requests</b><span class="note">Up to 5, from the ranked search.</span></div></li>
+    </ol>
+<pre class="prompt"><span class="h-mut">User request: fetch users from https://api.example.com/users</span>
+
+<span class="h-ses">Conversation so far in this session:</span>
+Summary of earlier turns: Pulled orders from api.example.com…
+- User: how many came back?
+  Agent: 42 orders.
+
+<span class="h-mut">Steps completed so far:</span>
+1. http_call → ok (200)
+
+<span class="h-rules">Standing rules from this user (binding, always apply):</span>
+- always send Accept: application/json to api.example.com
+
+<span class="h-epi">Corrections from past similar requests (do not repeat these mistakes):</span>
+- for a request like 'fetch orders from https://api.example.com/orders': always send Accept: application/json</pre>
+  </div>
+</section>
+
+<footer>
+  <div class="stack">
+    <span class="eyebrow">Where it lives in the code</span>
+    <div class="files">
+      <div><code>core/text.py</code><span>tokenize, stopwords, FTS query, min overlap</span></div>
+      <div><code>core/store.py</code><span>episodes, search_corrections, policy_state</span></div>
+      <div><code>core/memory.py</code><span>MemoryStore, Consolidator</span></div>
+      <div><code>llm/distiller.py</code><span>correction → rule, match or supersede</span></div>
+      <div><code>core/session.py</code><span>SessionStore: start, end, counters</span></div>
+      <div><code>llm/summarizer.py</code><span>rolling conversation summary</span></div>
+      <div><code>core/agent.py</code><span>reads all stores per step; writes after turns</span></div>
+      <div><code>llm/prompts.py</code><span>render_conversation, render_rules, render_corrections</span></div>
+    </div>
+  </div>
+</footer>
+</div>
+
+<script>
+(function () {
+  // ---------- 01 retrieval demo (mirrors core/text.py) ----------
+  var STOP = new Set(["fetch","get","call","please","the","a","an","from","to","for","at","with","and","on","of","run","make","do","using","into","via"]);
+  function rawTokens(s) { return (s.match(/[A-Za-z0-9]+/g) || []).map(function (t) { return t.toLowerCase(); }); }
+  function tokenize(s) { var out = new Set(); rawTokens(s).forEach(function (t) { if (t.length >= 2 && !STOP.has(t)) out.add(t); }); return out; }
+  function hosts(s) { var re = /https?:\/\/([^\/\s]+)/gi, m, out = []; while ((m = re.exec(s))) out.push(m[1].toLowerCase()); return out; }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+
+  var PAST = [
+    { req: "fetch orders from https://api.example.com/orders", cor: "always send Accept: application/json" },
+    { req: "POST to https://httpbin.org/post with {a:1}", cor: "include Content-Type: application/json" },
+    { req: "search the web for langfuse pricing", cor: "prefer the official site over blog posts" },
+    { req: "schedule a daily report of github stars", cor: "run it at 9am, not midnight" },
+    { req: "get the weather in Cairo", cor: "use metric units" }
+  ];
+
+  var q = document.getElementById("q");
+  function runSearch() {
+    var text = q.value;
+    var seen = new Set(), chips = [];
+    rawTokens(text).forEach(function (t) {
+      if (t.length < 2 || seen.has(t)) return; seen.add(t);
+      chips.push('<span class="tok' + (STOP.has(t) ? " stop" : "") + '">' + esc(t) + "</span>");
+    });
+    document.getElementById("q-tokens").innerHTML = chips.join("") || '<span class="note">none</span>';
+    var qh = hosts(text);
+    document.getElementById("q-hosts").innerHTML = qh.length ? qh.map(function (h) { return '<span class="tok host">' + esc(h) + "</span>"; }).join("") : '<span class="note">none</span>';
+    var qt = tokenize(text);
+    var need = qt.size < 2 ? 1 : 2;
+    document.getElementById("q-need").textContent = qt.size ? "≥ " + need + " shared token" + (need > 1 ? "s" : "") : "nothing to search";
+
+    var rows = PAST.map(function (p) {
+      var pt = tokenize(p.req), shared = [];
+      qt.forEach(function (t) { if (pt.has(t)) shared.push(t); });
+      var hostHit = hosts(p.req).some(function (h) { return qh.indexOf(h) !== -1; });
+      var anyFts = shared.length > 0 || tokenize(p.cor).size && Array.from(qt).some(function (t) { return tokenize(p.cor).has(t); });
+      var pass = qt.size > 0 && shared.length >= need;
+      return { p: p, shared: shared, hostHit: hostHit, pass: pass, fts: anyFts };
+    });
+    rows.sort(function (a, b) { return (b.pass - a.pass) || (b.hostHit - a.hostHit) || (b.shared.length - a.shared.length); });
+    document.getElementById("q-rows").innerHTML = rows.map(function (r) {
+      var verdict = r.pass ? '<span class="pill ok">to prompt' + (r.hostHit ? " · host match" : "") + "</span>"
+        : r.fts ? '<span class="pill no">filtered out</span>' : '<span class="pill off">no FTS hit</span>';
+      return "<tr" + (r.pass ? "" : ' class="dim"') + "><td class=\"mono\">" + esc(r.p.req) + "</td><td>" + esc(r.p.cor) +
+        '</td><td><div class="tokens">' + (r.shared.length ? r.shared.map(function (t) { return '<span class="tok">' + esc(t) + "</span>"; }).join("") : '<span class="note">0</span>') +
+        "</div></td><td>" + verdict + "</td></tr>";
+    }).join("");
+  }
+  q.addEventListener("input", runSearch);
+  document.querySelectorAll("[data-q]").forEach(function (b) { b.addEventListener("click", function () { q.value = b.getAttribute("data-q"); runSearch(); }); });
+  runSearch();
+
+  // ---------- 02 consolidation walkthrough ----------
+  var R_STEPS = [
+    { h: "Correction 1 · new rule",
+      p: "On “POST to https://httpbin.org/post with {a:1}”, the user says: “always include Content-Type: application/json”. The search finds no similar rule, so the Distiller returns a fresh rule and the Consolidator adds it.",
+      apply: function (t) { t.push({ id: "mem_a1", text: "always send Content-Type: application/json to httpbin.org", cap: "http_call", sup: 1, state: "active" }); return "mem_a1"; } },
+    { h: "Correction 2 · same meaning, support goes up",
+      p: "A week later: “you forgot the json content-type header again”. The FTS search surfaces mem_a1 as a candidate. The Distiller sets matches_existing_id = mem_a1, so no new row is added. support_count goes to 2 and the episode id is appended.",
+      apply: function (t) { t[0].sup = 2; return "mem_a1"; } },
+    { h: "Correction 3 · opposite meaning, supersede",
+      p: "The API changed: “httpbin now wants form-encoded bodies, not JSON”. The Distiller sets supersedes_id = mem_a1. The new rule is added and mem_a1 becomes inactive with superseded_by = mem_b2. It never reaches the prompt again.",
+      apply: function (t) { t[0].state = "superseded"; t[0].by = "mem_b2"; t.push({ id: "mem_b2", text: "send form-encoded bodies (not JSON) to httpbin.org", cap: "http_call", sup: 1, state: "active" }); return "mem_b2"; } },
+    { h: "Correction 4 · hallucinated id, ignored",
+      p: "“Use https, never plain http, for api.example.com”. The Distiller claims it matches “mem_zz9”, a rule it was never shown. The guard drops that id, and the correction is saved as a new rule instead of bumping the wrong one.",
+      apply: function (t) { t.push({ id: "mem_c3", text: "always use https for api.example.com", cap: "all", sup: 1, state: "active" }); return "mem_c3"; } }
+  ];
+  var rTable = [], rStep = 0;
+  var rNext = document.getElementById("r-next");
+  function renderRules(flashId) {
+    var body = document.getElementById("r-rows");
+    if (!rTable.length) { body.innerHTML = '<tr><td colspan="5" class="note">No rules yet. Send the first correction.</td></tr>'; return; }
+    var ordered = rTable.slice().sort(function (a, b) { return ((b.state === "active") - (a.state === "active")) || (b.sup - a.sup); });
+    body.innerHTML = ordered.map(function (r) {
+      var st = r.state === "active" ? '<span class="pill rules">active · in prompt</span>' : '<span class="pill off">superseded by ' + r.by + "</span>";
+      var cls = (r.state !== "active" ? "dim" : "") + (r.id === flashId ? " flash" : "");
+      return '<tr class="' + cls.trim() + '"><td class="mono">' + r.id + '</td><td><span class="txt">' + esc(r.text) + '</span></td><td class="mono">' + r.cap + '</td><td class="num">×' + r.sup + "</td><td>" + st + "</td></tr>";
+    }).join("");
+  }
+  rNext.addEventListener("click", function () {
+    if (rStep >= R_STEPS.length) return;
+    var s = R_STEPS[rStep], id = s.apply(rTable);
+    document.getElementById("r-event-h").textContent = s.h;
+    document.getElementById("r-event-p").textContent = s.p;
+    rStep++;
+    renderRules(id);
+    rNext.textContent = rStep < R_STEPS.length ? "Send correction " + (rStep + 1) : "All four sent";
+    rNext.disabled = rStep >= R_STEPS.length;
+  });
+  document.getElementById("r-reset").addEventListener("click", function () {
+    rTable = []; rStep = 0; rNext.disabled = false; rNext.textContent = "Send correction 1";
+    document.getElementById("r-event-h").textContent = "Rules table is empty";
+    document.getElementById("r-event-p").textContent = "No correction has been given yet. The planner prompt has no standing-rules section.";
+    renderRules();
+  });
+
+  // ---------- 03 session walkthrough (mirrors Agent._finish_episode / _session_context) ----------
+  var EVERY = 5;
+  var TURNS = [
+    ["what is langfuse?", "An open-source LLM observability platform: traces, evals, prompt management."],
+    ["who maintains it?", "Langfuse GmbH, a Berlin-based company; the core is MIT-licensed."],
+    ["write a short report about it", "Drafted a 3-section report: overview, features, pricing tiers."],
+    ["now make that a PDF", "Generated reports/langfuse.pdf (2 pages)."],
+    ["email-ready summary in 3 bullets", "1) OSS LLM tracing 2) self-host or cloud 3) free hobby tier."],
+    ["schedule that report weekly", "Scheduled job weekly-langfuse-report, Mondays 09:00."],
+    ["what was the filename again?", "reports/langfuse.pdf, from earlier in this session."]
+  ];
+  var SUMMARY_AT_5 = "User asked about Langfuse (open-source LLM observability; maintained by Langfuse GmbH, Berlin, MIT core). Agent drafted a 3-section report (overview, features, pricing) and generated reports/langfuse.pdf. Also produced a 3-bullet summary: OSS tracing, self-host or cloud, free hobby tier.";
+  var ses = null; // {status, count, through, summary}
+  var sNext = document.getElementById("s-next");
+  function renderSession(msg) {
+    document.getElementById("s-status").textContent = ses ? ses.status : "none";
+    document.getElementById("s-count").textContent = ses ? ses.count : 0;
+    document.getElementById("s-through").textContent = ses ? ses.through : 0;
+    document.getElementById("s-uns").textContent = ses ? ses.count - ses.through : 0;
+    document.getElementById("s-msg").textContent = msg;
+
+    var list = document.getElementById("s-turns");
+    if (!ses || !ses.count) {
+      list.innerHTML = '<li><span class="n">–</span><div class="note">No turns yet.</div><span></span></li>';
+    } else {
+      var items = [];
+      for (var i = 0; i < ses.count; i++) {
+        var folded = i < ses.through;
+        items.push('<li class="' + (folded ? "folded" : "") + '"><span class="n">' + (i + 1) + '</span><div><div class="q">' + esc(TURNS[i][0]) + '</div><div class="a">' + esc(TURNS[i][1]) + "</div></div>" +
+          (folded ? '<span class="pill ses">in summary</span>' : '<span class="pill off">verbatim</span>') + "</li>");
+      }
+      list.innerHTML = items.join("");
+    }
+
+    var pre = document.getElementById("s-prompt");
+    if (!ses) { pre.innerHTML = '<span class="h-mut">(nothing: no active session)</span>'; return; }
+    if (ses.status === "ended") { pre.innerHTML = '<span class="h-mut">(nothing: session ended. The row stays in the database, but an ended session is ignored.)</span>'; return; }
+    if (!ses.summary && ses.count === ses.through) { pre.innerHTML = '<span class="h-mut">(empty so far: the section renders only once there is a turn or a summary)</span>'; return; }
+    var out = ['<span class="h-ses">Conversation so far in this session:</span>'];
+    if (ses.summary) out.push("Summary of earlier turns: " + esc(ses.summary));
+    for (var j = ses.through; j < ses.count; j++) out.push("- User: " + esc(TURNS[j][0]) + "\n  Agent: " + esc(TURNS[j][1]));
+    pre.innerHTML = out.join("\n");
+  }
+  sNext.addEventListener("click", function () {
+    if (!ses) { ses = { status: "active", count: 0, through: 0, summary: "" }; sNext.textContent = "Send turn 1"; renderSession("POST /sessions created an active session. Its id now rides along with every chat message."); return; }
+    if (ses.status === "ended") return;
+    if (ses.count >= TURNS.length) {
+      ses.status = "ended"; sNext.disabled = true; sNext.textContent = "Session ended";
+      renderSession("POST /sessions/{id}/end. Chat goes back to independent episodes. Rules and corrections are unaffected.");
+      return;
+    }
+    ses.count++;
+    var uns = ses.count - ses.through, msg;
+    if (uns >= EVERY) {
+      ses.summary = SUMMARY_AT_5; ses.through = ses.count;
+      msg = "Turn " + ses.count + " finished with " + uns + " unsummarized turns (≥ " + EVERY + "), so the Summarizer folded them into the rolling summary and summarized_through moved to " + ses.count + ".";
+    } else {
+      msg = "Turn " + ses.count + " finished. turn_count went up by 1; " + uns + " of " + EVERY + " turns are waiting to be summarized.";
+      if (ses.count === 4) msg += " “that” resolves because turn 3 is in the prompt verbatim.";
+      if (ses.count === 7) msg += " The filename comes from the summary, since turn 4 is no longer verbatim.";
+    }
+    sNext.textContent = ses.count >= TURNS.length ? "End session" : "Send turn " + (ses.count + 1);
+    renderSession(msg);
+  });
+  document.getElementById("s-reset").addEventListener("click", function () {
+    ses = null; sNext.disabled = false; sNext.textContent = "Start session";
+    renderSession("No session. Each message is its own episode and the planner sees no earlier turns.");
+  });
+})();
+</script>
